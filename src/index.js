@@ -15,6 +15,7 @@ import farmaciaRoutes from './routes/farmacia.js';
 import clienteRoutes from './routes/cliente.js';
 import deliveryRoutes from './routes/delivery.js';
 import solicitudDeliveryRoutes from './routes/solicitudDelivery.js';
+import solicitudFarmaciaRoutes from './routes/solicitudFarmacia.js';
 import notificacionesRoutes from './routes/notificaciones.js';
 import configRoutes from './routes/config.js';
 
@@ -31,6 +32,7 @@ app.use('/api/farmacia', farmaciaRoutes);
 app.use('/api/cliente', clienteRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/solicitud-delivery', solicitudDeliveryRoutes);
+app.use('/api/solicitud-farmacia', solicitudFarmaciaRoutes);
 app.use('/api/notificaciones', notificacionesRoutes);
 app.use('/api/config', configRoutes);
 

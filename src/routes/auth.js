@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { body, validationResult } from 'express-validator';
 import User from '../models/User.js';
+import SolicitudFarmacia from '../models/SolicitudFarmacia.js';
 import { auth, attachUser } from '../middleware/auth.js';
 
 const router = Router();
@@ -17,8 +19,19 @@ router.post('/login',
       if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
 
       const { email, password } = req.body;
-      const user = await User.findOne({ email: email.toLowerCase(), activo: true });
-      if (!user || !(await user.comparePassword(password))) {
+      const emailNorm = email.toLowerCase();
+      const user = await User.findOne({ email: emailNorm, activo: true });
+      if (!user) {
+        const solFarmacia = await SolicitudFarmacia.findOne({ email: emailNorm, estado: 'pendiente' });
+        if (solFarmacia && await bcrypt.compare(password, solFarmacia.password)) {
+          return res.status(403).json({
+            error: 'Tu solicitud está siendo verificada por el administrador.',
+            code: 'SOLICITUD_FARMACIA_PENDIENTE',
+          });
+        }
+        return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+      }
+      if (!(await user.comparePassword(password))) {
         return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
       }
 

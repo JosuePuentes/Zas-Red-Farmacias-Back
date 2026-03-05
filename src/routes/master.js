@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import User from '../models/User.js';
 import Farmacia from '../models/Farmacia.js';
 import SolicitudDelivery from '../models/SolicitudDelivery.js';
+import SolicitudFarmacia from '../models/SolicitudFarmacia.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
 
@@ -84,6 +85,79 @@ router.get('/solicitudes-delivery', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar solicitudes' });
+  }
+});
+
+// Listar solicitudes de farmacia pendientes
+router.get('/solicitudes-farmacia', async (req, res) => {
+  try {
+    const list = await SolicitudFarmacia.find({ estado: 'pendiente' })
+      .select('-password')
+      .sort({ createdAt: -1 });
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar solicitudes de farmacia' });
+  }
+});
+
+// Aprobar solicitud farmacia: crear User (farmacia) + Farmacia y vincular
+router.post('/solicitudes-farmacia/:id/aprobar', async (req, res) => {
+  try {
+    const sol = await SolicitudFarmacia.findById(req.params.id);
+    if (!sol || sol.estado !== 'pendiente') {
+      return res.status(400).json({ error: 'Solicitud no encontrada o ya procesada' });
+    }
+    const exists = await User.findOne({ email: sol.email });
+    if (exists) return res.status(400).json({ error: 'Ya existe un usuario con ese correo' });
+
+    const estadoVzla = ESTADOS_VENEZUELA.includes(sol.estadoUbicacion?.trim())
+      ? sol.estadoUbicacion.trim()
+      : (ESTADOS_VENEZUELA[0] || 'Distrito Capital');
+
+    const user = await User.create({
+      email: sol.email,
+      password: 'temp', // se reemplaza abajo con el hash de la solicitud (evitar doble hash)
+      role: 'farmacia',
+      nombre: sol.nombreEncargado,
+    });
+    await User.updateOne({ _id: user._id }, { $set: { password: sol.password } });
+
+    const farmacia = await Farmacia.create({
+      usuarioId: user._id,
+      nombreFarmacia: sol.nombreFarmacia,
+      rif: sol.rif,
+      gerenteEncargado: sol.nombreEncargado,
+      direccion: sol.direccion,
+      telefono: sol.telefono,
+      estado: estadoVzla,
+      porcentajePrecio: 0,
+    });
+
+    await User.updateOne({ _id: user._id }, { farmaciaId: farmacia._id });
+    await SolicitudFarmacia.updateOne(
+      { _id: req.params.id },
+      { estado: 'aprobado', usuarioId: user._id }
+    );
+
+    res.json({ message: 'Farmacia aprobada', userId: user._id, farmaciaId: farmacia._id });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al aprobar solicitud' });
+  }
+});
+
+// Denegar solicitud farmacia
+router.post('/solicitudes-farmacia/:id/denegar', async (req, res) => {
+  try {
+    await SolicitudFarmacia.updateOne(
+      { _id: req.params.id, estado: 'pendiente' },
+      { estado: 'denegado' }
+    );
+    res.json({ message: 'Solicitud denegada' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al denegar' });
   }
 });
 
