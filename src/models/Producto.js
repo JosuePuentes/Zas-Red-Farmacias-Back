@@ -8,6 +8,8 @@ const productoSchema = new mongoose.Schema({
   presentacion: String,
   marca: String,
   precioBase: { type: Number, required: true },
+  descuentoPorcentaje: { type: Number, default: 0 },
+  precioConPorcentaje: { type: Number },
   existencia: { type: Number, required: true, default: 0 },
   foto: String,
 }, { timestamps: true });

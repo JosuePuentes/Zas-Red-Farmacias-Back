@@ -63,6 +63,82 @@ router.get('/productos', async (req, res) => {
   }
 });
 
+function clampPercentage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+function getDescuento(producto) {
+  if (typeof producto.descuentoPorcentaje === 'number') {
+    return clampPercentage(producto.descuentoPorcentaje);
+  }
+  return 0;
+}
+
+function getPrecioConPorcentaje(producto) {
+  const base = Number(producto.precioBase) || 0;
+  const descuento = getDescuento(producto);
+  if (typeof producto.precioConPorcentaje === 'number') {
+    return Math.round(producto.precioConPorcentaje * 100) / 100;
+  }
+  if (descuento > 0) {
+    const factor = 1 - descuento / 100;
+    return Math.round(base * factor * 100) / 100;
+  }
+  return base;
+}
+
+// Catálogo para nuevo frontend: mismos productos con información de descuentos
+router.get('/catalogo', async (req, res) => {
+  try {
+    const { estado, farmaciaId } = req.query;
+    const filter = { existencia: { $gt: 0 } };
+
+    if (farmaciaId) {
+      filter.farmaciaId = farmaciaId;
+    }
+
+    if (estado && ESTADOS_VENEZUELA.includes(estado)) {
+      const farmacias = await Farmacia.find({ estado }).select('_id');
+      const ids = farmacias.map((f) => f._id);
+      filter.farmaciaId = { $in: ids };
+    }
+
+    const productos = await Producto.find(filter)
+      .populate('farmaciaId', 'estado _id')
+      .sort({ descripcion: 1 });
+
+    const respuesta = productos.map((p) => {
+      const descuento = getDescuento(p);
+      const precioBase = Number(p.precioBase) || 0;
+      const precioCon = getPrecioConPorcentaje(p);
+      return {
+        id: p._id.toString(),
+        codigo: p.codigo,
+        descripcion: p.descripcion,
+        principioActivo: p.principioActivo,
+        presentacion: p.presentacion,
+        marca: p.marca,
+        precio: precioBase,
+        descuentoPorcentaje: descuento,
+        precioConPorcentaje: precioCon,
+        imagen: p.foto,
+        farmaciaId: (p.farmaciaId?._id || p.farmaciaId)?.toString(),
+        existencia: p.existencia,
+      };
+    });
+
+    res.json(respuesta);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar catálogo' });
+  }
+}
+);
+
 // Estados para filtro
 router.get('/estados', (req, res) => {
   res.json(ESTADOS_VENEZUELA);
@@ -168,7 +244,8 @@ router.get('/checkout/resumen', async (req, res) => {
     for (const it of items) {
       const p = it.productoId;
       if (!p) continue;
-      const monto = p.precioBase * it.cantidad;
+      const precioUnitario = getPrecioConPorcentaje(p);
+      const monto = precioUnitario * it.cantidad;
       subtotal += monto;
       const fid = p.farmaciaId?.toString() || p.farmaciaId;
       if (!byFarmacia.has(fid)) byFarmacia.set(fid, 0);
@@ -222,7 +299,8 @@ router.post('/checkout/procesar',
         if (!p) continue;
         const fid = p.farmaciaId?.toString() || p.farmaciaId;
         if (!porFarmacia.has(fid)) porFarmacia.set(fid, []);
-        porFarmacia.get(fid).push({ productoId: p._id, cantidad: it.cantidad, precioUnitario: p.precioBase, codigo: p.codigo, descripcion: p.descripcion });
+        const precioUnitario = getPrecioConPorcentaje(p);
+        porFarmacia.get(fid).push({ productoId: p._id, cantidad: it.cantidad, precioUnitario, codigo: p.codigo, descripcion: p.descripcion });
       }
 
       const costoDeliveryBase = 2;

@@ -18,6 +18,21 @@ function getFarmaciaId(req) {
   return req.user?.farmaciaId?._id || req.user?.farmaciaId;
 }
 
+function clampPercentage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+function calcularPrecioConDescuento(precioBase, descuentoPorcentaje) {
+  const base = Number(precioBase) || 0;
+  const pct = clampPercentage(descuentoPorcentaje);
+  const factor = 1 - pct / 100;
+  return Math.round(base * 100 * factor) / 100;
+}
+
 // Dashboard: total productos vendidos, total $ vendidos, total clientes
 router.get('/dashboard', async (req, res) => {
   try {
@@ -161,7 +176,11 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
 
       if (!codigo || !descripcion) continue;
 
+      const descuentoRaw = row.descuentoPorcentaje ?? row.DescuentoPorcentaje ?? row.descuento ?? row.Descuento;
+      const descuentoPorcentaje = clampPercentage(descuentoRaw);
+
       const precioConPorcentaje = precio * (1 + porcentaje);
+      const precioConDescuento = calcularPrecioConDescuento(precioConPorcentaje, descuentoPorcentaje);
 
       const existing = await Producto.findOne({ farmaciaId, codigo });
       if (existing) {
@@ -169,6 +188,8 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
         existing.marca = marca;
         existing.precioBase = precioConPorcentaje;
         existing.existencia = existencia;
+        existing.descuentoPorcentaje = descuentoPorcentaje;
+        existing.precioConPorcentaje = descuentoPorcentaje ? precioConDescuento : precioConPorcentaje;
         await existing.save();
         actualizados++;
       } else {
@@ -178,6 +199,8 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
           descripcion,
           marca,
           precioBase: precioConPorcentaje,
+          descuentoPorcentaje,
+          precioConPorcentaje: descuentoPorcentaje ? precioConDescuento : precioConPorcentaje,
           existencia,
         });
         creados++;
@@ -200,6 +223,79 @@ router.get('/productos', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar productos' });
+  }
+});
+
+function mapProductoToDTO(p) {
+  const descuento = typeof p.descuentoPorcentaje === 'number' ? clampPercentage(p.descuentoPorcentaje) : 0;
+  const precioBase = Number(p.precioBase) || 0;
+  const precioConPorcentaje = typeof p.precioConPorcentaje === 'number'
+    ? Math.round(p.precioConPorcentaje * 100) / 100
+    : calcularPrecioConDescuento(precioBase, descuento);
+
+  return {
+    id: p._id,
+    codigo: p.codigo,
+    descripcion: p.descripcion,
+    principioActivo: p.principioActivo,
+    presentacion: p.presentacion,
+    marca: p.marca,
+    precio: precioBase,
+    descuentoPorcentaje: descuento,
+    precioConPorcentaje,
+    existencia: p.existencia,
+    imagen: p.foto,
+    farmaciaId: p.farmaciaId,
+  };
+}
+
+// Inventario detallado para la farmacia (incluye descuentos)
+router.get('/inventario', async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+    const productos = await Producto.find({ farmaciaId }).sort({ codigo: 1 });
+    const dto = productos.map(mapProductoToDTO);
+    res.json(dto);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener inventario' });
+  }
+});
+
+// Actualizar descuentos de productos (masivo e individual)
+router.patch('/inventario/descuentos', async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+
+    const payload = Array.isArray(req.body) ? req.body : [];
+    if (!payload.length) return res.status(400).json({ error: 'Body debe ser un array de descuentos' });
+
+    let updated = 0;
+
+    for (const item of payload) {
+      const { id, descuentoPorcentaje } = item || {};
+      if (!id) continue;
+      if (!mongoose.Types.ObjectId.isValid(id)) continue;
+
+      const producto = await Producto.findOne({ _id: id, farmaciaId });
+      if (!producto) continue;
+
+      const porcentaje = clampPercentage(descuentoPorcentaje);
+      const precioBase = producto.precioBase;
+      const precioConPorcentaje = calcularPrecioConDescuento(precioBase, porcentaje);
+
+      producto.descuentoPorcentaje = porcentaje;
+      producto.precioConPorcentaje = precioConPorcentaje;
+      await producto.save();
+      updated++;
+    }
+
+    res.json({ ok: true, updated });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al actualizar descuentos' });
   }
 });
 
