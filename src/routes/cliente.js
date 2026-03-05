@@ -1,0 +1,314 @@
+import { Router } from 'express';
+import mongoose from 'mongoose';
+import { body, validationResult } from 'express-validator';
+import Producto from '../models/Producto.js';
+import Farmacia from '../models/Farmacia.js';
+import Carrito from '../models/Carrito.js';
+import Pedido from '../models/Pedido.js';
+import Notificacion from '../models/Notificacion.js';
+import User from '../models/User.js';
+import { auth, requireRole, attachUser } from '../middleware/auth.js';
+import { upload } from '../middleware/upload.js';
+import { ESTADOS_VENEZUELA } from '../constants/estados.js';
+
+const router = Router();
+
+router.use(auth, requireRole('cliente'), attachUser);
+
+// Catálogo: productos con filtro por estado (Venezuela). No se muestra nombre de farmacia.
+router.get('/productos', async (req, res) => {
+  try {
+    const { estado, q } = req.query;
+    let filter = { existencia: { $gt: 0 } };
+
+    if (estado && ESTADOS_VENEZUELA.includes(estado)) {
+      const farmacias = await Farmacia.find({ estado }).select('_id');
+      const ids = farmacias.map((f) => f._id);
+      filter.farmaciaId = { $in: ids };
+    }
+
+    if (q && String(q).trim()) {
+      const search = new RegExp(String(q).trim(), 'i');
+      filter.$or = [
+        { codigo: search },
+        { descripcion: search },
+        { principioActivo: search },
+        { marca: search },
+      ];
+    }
+
+    const productos = await Producto.find(filter)
+      .populate('farmaciaId', 'estado _id')
+      .sort({ descripcion: 1 });
+
+    // Precio ya viene con % aplicado (precioBase en Producto). En cliente no mostramos nombre farmacia, solo agrupamos por farmaciaId.
+    const list = productos.map((p) => ({
+      _id: p._id,
+      codigo: p.codigo,
+      descripcion: p.descripcion,
+      principioActivo: p.principioActivo,
+      presentacion: p.presentacion,
+      marca: p.marca,
+      precio: p.precioBase,
+      existencia: p.existencia,
+      foto: p.foto,
+      farmaciaId: p.farmaciaId?._id,
+      estadoFarmacia: p.farmaciaId?.estado,
+    }));
+
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar productos' });
+  }
+});
+
+// Estados para filtro
+router.get('/estados', (req, res) => {
+  res.json(ESTADOS_VENEZUELA);
+});
+
+// Carrito: agregar
+router.post('/carrito',
+  body('productoId').isMongoId(),
+  body('cantidad').isInt({ min: 1 }),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos' });
+
+      const producto = await Producto.findById(req.body.productoId);
+      if (!producto || producto.existencia < req.body.cantidad) {
+        return res.status(400).json({ error: 'Producto no disponible o sin stock' });
+      }
+
+      let item = await Carrito.findOne({
+        clienteId: req.userId,
+        productoId: req.body.productoId,
+      });
+      if (item) {
+        item.cantidad = Math.min(item.cantidad + req.body.cantidad, producto.existencia);
+        await item.save();
+      } else {
+        item = await Carrito.create({
+          clienteId: req.userId,
+          productoId: req.body.productoId,
+          cantidad: Math.min(req.body.cantidad, producto.existencia),
+        });
+      }
+
+      const carrito = await Carrito.find({ clienteId: req.userId })
+        .populate('productoId');
+      res.json(carrito);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al agregar al carrito' });
+    }
+  }
+);
+
+// Carrito: listar
+router.get('/carrito', async (req, res) => {
+  try {
+    const items = await Carrito.find({ clienteId: req.userId })
+      .populate('productoId');
+    res.json(items);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener carrito' });
+  }
+});
+
+// Carrito: actualizar cantidad
+router.patch('/carrito/:productoId',
+  body('cantidad').isInt({ min: 0 }),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) return res.status(400).json({ error: 'Cantidad inválida' });
+      if (req.body.cantidad === 0) {
+        await Carrito.deleteOne({ clienteId: req.userId, productoId: req.params.productoId });
+      } else {
+        const producto = await Producto.findById(req.params.productoId);
+        if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
+        await Carrito.updateOne(
+          { clienteId: req.userId, productoId: req.params.productoId },
+          { cantidad: Math.min(req.body.cantidad, producto.existencia) }
+        );
+      }
+      const carrito = await Carrito.find({ clienteId: req.userId }).populate('productoId');
+      res.json(carrito);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al actualizar carrito' });
+    }
+  }
+);
+
+// Carrito: eliminar item
+router.delete('/carrito/:productoId', async (req, res) => {
+  try {
+    await Carrito.deleteOne({ clienteId: req.userId, productoId: req.params.productoId });
+    const carrito = await Carrito.find({ clienteId: req.userId }).populate('productoId');
+    res.json(carrito);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al eliminar' });
+  }
+});
+
+// Resumen checkout: total + costo delivery (según lógica; aquí se puede usar distancia o fijo)
+router.get('/checkout/resumen', async (req, res) => {
+  try {
+    const items = await Carrito.find({ clienteId: req.userId }).populate('productoId');
+    const cliente = await User.findById(req.userId);
+    let subtotal = 0;
+    const byFarmacia = new Map();
+
+    for (const it of items) {
+      const p = it.productoId;
+      if (!p) continue;
+      const monto = p.precioBase * it.cantidad;
+      subtotal += monto;
+      const fid = p.farmaciaId?.toString() || p.farmaciaId;
+      if (!byFarmacia.has(fid)) byFarmacia.set(fid, 0);
+      byFarmacia.set(fid, byFarmacia.get(fid) + monto);
+    }
+
+    // Costo delivery: ejemplo base 2$ + 0.5$ por cada farmacia adicional
+    const numFarmacias = byFarmacia.size;
+    const costoDeliveryBase = 2;
+    const costoDeliveryExtra = (numFarmacias - 1) * 1.5;
+    const costoDelivery = Math.round((costoDeliveryBase + Math.max(0, costoDeliveryExtra)) * 100) / 100;
+    const total = Math.round((subtotal + costoDelivery) * 100) / 100;
+
+    res.json({
+      subtotal,
+      costoDelivery,
+      total,
+      numFarmacias,
+      direccion: cliente?.direccion,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al calcular resumen' });
+  }
+});
+
+// Procesar compra: subir comprobante y crear pedido(s) por farmacia
+router.post('/checkout/procesar',
+  body('metodoPago').isIn(['pago_movil', 'transferencia', 'zelle', 'binance']),
+  upload.single('comprobante'),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos' });
+
+      if (!req.file) return res.status(400).json({ error: 'Debe cargar el comprobante de pago' });
+
+      const cliente = await User.findById(req.userId);
+      const items = await Carrito.find({ clienteId: req.userId }).populate('productoId');
+      if (!items.length) return res.status(400).json({ error: 'Carrito vacío' });
+
+      const comprobanteUrl = `/uploads/${req.file.filename}`;
+      const direccionEntrega = cliente.direccion || '';
+      const lat = cliente.ultimaLat;
+      const lng = cliente.ultimaLng;
+
+      // Agrupar por farmacia
+      const porFarmacia = new Map();
+      for (const it of items) {
+        const p = it.productoId;
+        if (!p) continue;
+        const fid = p.farmaciaId?.toString() || p.farmaciaId;
+        if (!porFarmacia.has(fid)) porFarmacia.set(fid, []);
+        porFarmacia.get(fid).push({ productoId: p._id, cantidad: it.cantidad, precioUnitario: p.precioBase, codigo: p.codigo, descripcion: p.descripcion });
+      }
+
+      const costoDeliveryBase = 2;
+      const numFarmacias = porFarmacia.size;
+      const costoDeliveryPorPedido = Math.round((costoDeliveryBase + (numFarmacias - 1) * 1.5) / numFarmacias * 100) / 100;
+
+      const pedidosCreados = [];
+
+      for (const [farmaciaId, articulos] of porFarmacia) {
+        let subtotal = 0;
+        const lineas = articulos.map((a) => {
+          subtotal += a.precioUnitario * a.cantidad;
+          return {
+            productoId: a.productoId,
+            codigo: a.codigo,
+            descripcion: a.descripcion,
+            cantidad: a.cantidad,
+            precioUnitario: a.precioUnitario,
+          };
+        });
+        const costoDelivery = costoDeliveryPorPedido;
+        const total = Math.round((subtotal + costoDelivery) * 100) / 100;
+
+        const pedido = await Pedido.create({
+          clienteId: req.userId,
+          farmaciaId: new mongoose.Types.ObjectId(farmaciaId),
+          items: lineas,
+          subtotal,
+          costoDelivery,
+          total,
+          direccionEntrega,
+          lat,
+          lng,
+          metodoPago: req.body.metodoPago,
+          comprobanteUrl,
+          estado: 'pendiente_validacion',
+        });
+        pedidosCreados.push(pedido);
+
+        const farmacia = await Farmacia.findById(farmaciaId);
+        const userFarmacia = await User.findOne({ farmaciaId });
+        if (userFarmacia) {
+          await Notificacion.create({
+            userId: userFarmacia._id,
+            tipo: 'pedido_nuevo',
+            mensaje: `Nuevo pedido #${pedido._id.toString().slice(-6)}`,
+            pedidoId: pedido._id,
+          });
+        }
+      }
+
+      await Carrito.deleteMany({ clienteId: req.userId });
+
+      res.status(201).json({ message: 'Compra procesada', pedidos: pedidosCreados });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al procesar compra' });
+    }
+  }
+);
+
+// Actualizar ubicación (GPS) del cliente
+router.patch('/ubicacion', body('lat').isFloat(), body('lng').isFloat(), async (req, res) => {
+  try {
+    await User.updateOne(
+      { _id: req.userId },
+      { ultimaLat: req.body.lat, ultimaLng: req.body.lng }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al actualizar ubicación' });
+  }
+});
+
+// Mis pedidos
+router.get('/mis-pedidos', async (req, res) => {
+  try {
+    const pedidos = await Pedido.find({ clienteId: req.userId })
+      .populate('farmaciaId', 'nombreFarmacia')
+      .sort({ createdAt: -1 });
+    res.json(pedidos);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar pedidos' });
+  }
+});
+
+export default router;
