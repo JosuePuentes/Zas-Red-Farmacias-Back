@@ -216,11 +216,18 @@ router.post('/solicitudes-delivery/:id/denegar', async (req, res) => {
   }
 });
 
-// Pedidos globales (todos los pedidos para vista master)
+// Pedidos globales (todos los pedidos para vista master). Query: fechaDesde, fechaHasta (ISO)
 router.get('/pedidos', async (req, res) => {
   try {
     const Pedido = (await import('../models/Pedido.js')).default;
-    const pedidos = await Pedido.find()
+    const { fechaDesde, fechaHasta } = req.query;
+    const filter = {};
+    if (fechaDesde || fechaHasta) {
+      filter.createdAt = {};
+      if (fechaDesde) filter.createdAt.$gte = new Date(fechaDesde);
+      if (fechaHasta) filter.createdAt.$lte = new Date(fechaHasta + 'T23:59:59.999Z');
+    }
+    const pedidos = await Pedido.find(filter)
       .populate('clienteId', 'nombre apellido email telefono direccion cedula')
       .populate('farmaciaId', 'nombreFarmacia rif direccion telefono')
       .populate('deliveryId', 'nombre email telefono')
@@ -229,6 +236,62 @@ router.get('/pedidos', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar pedidos' });
+  }
+});
+
+// Estadísticas para dashboard: pedidos procesados, productos vendidos, clientes, ventas, delivery. Query: fechaDesde, fechaHasta (ISO)
+router.get('/estadisticas', async (req, res) => {
+  try {
+    const Pedido = (await import('../models/Pedido.js')).default;
+    const { fechaDesde, fechaHasta } = req.query;
+    const match = {};
+    if (fechaDesde || fechaHasta) {
+      match.createdAt = {};
+      if (fechaDesde) match.createdAt.$gte = new Date(fechaDesde);
+      if (fechaHasta) match.createdAt.$lte = new Date(fechaHasta + 'T23:59:59.999Z');
+    }
+
+    const matchEntregados = { ...match, estado: 'entregado' };
+    const estadosProcesados = ['validado', 'asignado_delivery', 'en_camino', 'entregado'];
+
+    const [
+      totalPedidos,
+      pedidosProcesados,
+      pedidosEntregados,
+      aggProductosVentas,
+      aggClientes,
+    ] = await Promise.all([
+      Pedido.countDocuments(match),
+      Pedido.countDocuments({ ...match, estado: { $in: estadosProcesados } }),
+      Pedido.countDocuments(matchEntregados),
+      Pedido.aggregate([
+        { $match: matchEntregados },
+        { $unwind: '$items' },
+        { $group: { _id: null, totalProductos: { $sum: '$items.cantidad' }, totalVentas: { $sum: '$total' } } },
+      ]),
+      Pedido.aggregate([
+        { $match: match },
+        { $group: { _id: '$clienteId' } },
+        { $count: 'total' },
+      ]),
+    ]);
+
+    const totalProductosVendidos = aggProductosVentas[0]?.totalProductos ?? 0;
+    const totalVentas = aggProductosVentas[0]?.totalVentas ?? 0;
+    const totalClientes = aggClientes[0]?.total ?? 0;
+
+    res.json({
+      totalPedidos,
+      pedidosProcesados,
+      pedidosEntregados,
+      totalProductosVendidos,
+      totalClientes,
+      totalVentas,
+      totalDelivery: pedidosEntregados,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener estadísticas' });
   }
 });
 

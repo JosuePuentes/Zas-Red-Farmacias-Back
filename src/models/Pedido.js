@@ -40,5 +40,6 @@ const pedidoSchema = new mongoose.Schema({
 pedidoSchema.index({ farmaciaId: 1, estado: 1 });
 pedidoSchema.index({ deliveryId: 1, estado: 1 });
 pedidoSchema.index({ clienteId: 1 });
+pedidoSchema.index({ createdAt: 1 });
 
 export default mongoose.model('Pedido', pedidoSchema);
