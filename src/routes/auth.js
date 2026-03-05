@@ -28,12 +28,13 @@ router.post('/login',
         { expiresIn: '7d' }
       );
 
+      const role = String(user.role || '').toLowerCase();
       const payload = {
         token,
         user: {
           _id: user._id,
           email: user.email,
-          role: user.role,
+          role,
           nombre: user.nombre,
           farmaciaId: user.farmaciaId,
           fotoCarnet: user.fotoCarnet,
@@ -105,10 +106,12 @@ router.post('/register/cliente',
   }
 );
 
-// Yo (usuario logueado)
+// Yo (usuario logueado) — devuelve usuario con role siempre como string para redirección en front
 router.get('/me', auth, attachUser, (req, res) => {
   if (!req.user) return res.status(404).json({ error: 'Usuario no encontrado' });
-  res.json(req.user);
+  const u = req.user.toObject ? req.user.toObject() : { ...req.user };
+  u.role = String(u.role || '').toLowerCase();
+  res.json(u);
 });
 
 export default router;
