@@ -15,6 +15,34 @@ const router = Router();
 
 router.use(auth, requireRole('cliente'), attachUser);
 
+function clampPercentage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+function getDescuento(producto) {
+  if (typeof producto.descuentoPorcentaje === 'number') {
+    return clampPercentage(producto.descuentoPorcentaje);
+  }
+  return 0;
+}
+
+function getPrecioConPorcentaje(producto) {
+  const base = Number(producto.precioBase) || 0;
+  const descuento = getDescuento(producto);
+  if (typeof producto.precioConPorcentaje === 'number') {
+    return Math.round(producto.precioConPorcentaje * 100) / 100;
+  }
+  if (descuento > 0) {
+    const factor = 1 - descuento / 100;
+    return Math.round(base * factor * 100) / 100;
+  }
+  return base;
+}
+
 // Catálogo: productos con filtro por estado (Venezuela). No se muestra nombre de farmacia.
 router.get('/productos', async (req, res) => {
   try {
@@ -49,6 +77,7 @@ router.get('/productos', async (req, res) => {
       principioActivo: p.principioActivo,
       presentacion: p.presentacion,
       marca: p.marca,
+      categoria: p.categoria,
       precio: p.precioBase,
       existencia: p.existencia,
       foto: p.foto,
@@ -62,34 +91,6 @@ router.get('/productos', async (req, res) => {
     res.status(500).json({ error: 'Error al listar productos' });
   }
 });
-
-function clampPercentage(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  if (n < 0) return 0;
-  if (n > 100) return 100;
-  return n;
-}
-
-function getDescuento(producto) {
-  if (typeof producto.descuentoPorcentaje === 'number') {
-    return clampPercentage(producto.descuentoPorcentaje);
-  }
-  return 0;
-}
-
-function getPrecioConPorcentaje(producto) {
-  const base = Number(producto.precioBase) || 0;
-  const descuento = getDescuento(producto);
-  if (typeof producto.precioConPorcentaje === 'number') {
-    return Math.round(producto.precioConPorcentaje * 100) / 100;
-  }
-  if (descuento > 0) {
-    const factor = 1 - descuento / 100;
-    return Math.round(base * factor * 100) / 100;
-  }
-  return base;
-}
 
 // Catálogo para nuevo frontend: mismos productos con información de descuentos
 router.get('/catalogo', async (req, res) => {
@@ -122,6 +123,7 @@ router.get('/catalogo', async (req, res) => {
         principioActivo: p.principioActivo,
         presentacion: p.presentacion,
         marca: p.marca,
+        categoria: p.categoria,
         precio: precioBase,
         descuentoPorcentaje: descuento,
         precioConPorcentaje: precioCon,
@@ -136,8 +138,7 @@ router.get('/catalogo', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Error al listar catálogo' });
   }
-}
-);
+});
 
 // Estados para filtro
 router.get('/estados', (req, res) => {

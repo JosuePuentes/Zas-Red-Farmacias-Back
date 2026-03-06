@@ -3,7 +3,7 @@ import { body, validationResult } from 'express-validator';
 import mongoose from 'mongoose';
 import xlsx from 'xlsx';
 import Farmacia from '../models/Farmacia.js';
-import Producto from '../models/Producto.js';
+import Producto, { CATEGORIAS_PRODUCTO } from '../models/Producto.js';
 import Pedido from '../models/Pedido.js';
 import Notificacion from '../models/Notificacion.js';
 import User from '../models/User.js';
@@ -30,7 +30,7 @@ function calcularPrecioConDescuento(precioBase, descuentoPorcentaje) {
   const base = Number(precioBase) || 0;
   const pct = clampPercentage(descuentoPorcentaje);
   const factor = 1 - pct / 100;
-  return Math.round(base * 100 * factor) / 100;
+  return Math.round(base * factor * 100) / 100;
 }
 
 // Dashboard: total productos vendidos, total $ vendidos, total clientes
@@ -182,6 +182,9 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
       const precioConPorcentaje = precio * (1 + porcentaje);
       const precioConDescuento = calcularPrecioConDescuento(precioConPorcentaje, descuentoPorcentaje);
 
+      const categoriaRaw = String(row.categoria ?? row.Categoria ?? '').trim();
+      const categoria = CATEGORIAS_PRODUCTO.includes(categoriaRaw) ? categoriaRaw : undefined;
+
       const existing = await Producto.findOne({ farmaciaId, codigo });
       if (existing) {
         existing.descripcion = descripcion;
@@ -190,6 +193,9 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
         existing.existencia = existencia;
         existing.descuentoPorcentaje = descuentoPorcentaje;
         existing.precioConPorcentaje = descuentoPorcentaje ? precioConDescuento : precioConPorcentaje;
+        if (categoria) {
+          existing.categoria = categoria;
+        }
         await existing.save();
         actualizados++;
       } else {
@@ -198,6 +204,7 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
           codigo,
           descripcion,
           marca,
+          categoria,
           precioBase: precioConPorcentaje,
           descuentoPorcentaje,
           precioConPorcentaje: descuentoPorcentaje ? precioConDescuento : precioConPorcentaje,
@@ -240,6 +247,7 @@ function mapProductoToDTO(p) {
     principioActivo: p.principioActivo,
     presentacion: p.presentacion,
     marca: p.marca,
+    categoria: p.categoria,
     precio: precioBase,
     descuentoPorcentaje: descuento,
     precioConPorcentaje,
