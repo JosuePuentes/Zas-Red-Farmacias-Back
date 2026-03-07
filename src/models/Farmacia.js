@@ -11,6 +11,7 @@ const farmaciaSchema = new mongoose.Schema({
   lat: Number,  // Coordenadas para que el delivery sepa dónde recoger
   lng: Number,
   porcentajePrecio: { type: Number, required: true, default: 0 }, // % que se suma al precio de cada producto
+  planProActivo: { type: Boolean, default: false },
 }, { timestamps: true });
 
 export default mongoose.model('Farmacia', farmaciaSchema);
