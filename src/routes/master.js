@@ -12,6 +12,17 @@ const router = Router();
 
 router.use(auth, requireRole('master'));
 
+// Listar todas las farmacias (para que master elija "entrar como" una farmacia)
+router.get('/farmacias', async (req, res) => {
+  try {
+    const list = await Farmacia.find().select('nombreFarmacia rif estado direccion telefono planProActivo').sort({ nombreFarmacia: 1 });
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar farmacias' });
+  }
+});
+
 // Listar todos los usuarios (para ver tipo: cliente, delivery, farmacia)
 router.get('/usuarios', async (req, res) => {
   try {

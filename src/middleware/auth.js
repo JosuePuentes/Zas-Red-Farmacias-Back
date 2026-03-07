@@ -20,6 +20,8 @@ export function auth(req, res, next) {
 
 export function requireRole(...roles) {
   return (req, res, next) => {
+    // Master puede entrar a cualquier portal (cliente, delivery, farmacia, admin) sin restricción
+    if (req.role === 'master') return next();
     if (!roles.includes(req.role)) {
       return res.status(403).json({ error: 'Sin permiso para esta acción' });
     }

@@ -4,12 +4,21 @@ import Pedido from '../models/Pedido.js';
 import User from '../models/User.js';
 import Notificacion from '../models/Notificacion.js';
 import DeliveryStats from '../models/DeliveryStats.js';
+import mongoose from 'mongoose';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 
 const router = Router();
 
 router.use(auth, requireRole('delivery'), attachUser);
+
+function getDeliveryId(req) {
+  if (req.role === 'master' && (req.headers['x-delivery-id'] || req.query.deliveryId)) {
+    const id = req.headers['x-delivery-id'] || req.query.deliveryId;
+    if (mongoose.Types.ObjectId.isValid(id)) return new mongoose.Types.ObjectId(id);
+  }
+  return req.userId;
+}
 
 // Actualizar posición del delivery en tiempo real (para que el cliente vea dónde va)
 router.patch('/ubicacion',
@@ -20,7 +29,7 @@ router.patch('/ubicacion',
       const err = validationResult(req);
       if (!err.isEmpty()) return res.status(400).json({ error: 'lat y lng requeridos', details: err.array() });
       await User.updateOne(
-        { _id: req.userId },
+        { _id: getDeliveryId(req) },
         { ultimaLat: req.body.lat, ultimaLng: req.body.lng }
       );
       res.json({ ok: true });
@@ -34,11 +43,11 @@ router.patch('/ubicacion',
 // Activar/desactivar recepción de pedidos
 router.patch('/activo', body('activo').isBoolean(), async (req, res) => {
   try {
-    const user = await User.findById(req.userId);
+    const user = await User.findById(getDeliveryId(req));
     if (!user?.deliveryAprobado) return res.status(403).json({ error: 'Delivery no aprobado' });
 
     await User.updateOne(
-      { _id: req.userId },
+      { _id: getDeliveryId(req) },
       { activoRecepcionPedidos: !!req.body.activo }
     );
     res.json({ activoRecepcionPedidos: !!req.body.activo });
@@ -51,7 +60,7 @@ router.patch('/activo', body('activo').isBoolean(), async (req, res) => {
 // Pedidos validados disponibles para aceptar (solo si está activo)
 router.get('/pedidos-disponibles', async (req, res) => {
   try {
-    const user = await User.findById(req.userId);
+    const user = await User.findById(getDeliveryId(req));
     if (!user?.deliveryAprobado || !user?.activoRecepcionPedidos) {
       return res.json([]);
     }
@@ -89,7 +98,7 @@ router.get('/pedidos-disponibles', async (req, res) => {
 // Aceptar pedido (dentro del minuto)
 router.post('/pedidos/:id/aceptar', async (req, res) => {
   try {
-    const user = await User.findById(req.userId);
+    const user = await User.findById(getDeliveryId(req));
     if (!user?.deliveryAprobado || !user?.activoRecepcionPedidos) {
       return res.status(403).json({ error: 'Debe activar recepción de pedidos' });
     }
@@ -108,13 +117,13 @@ router.post('/pedidos/:id/aceptar', async (req, res) => {
       return res.status(400).json({ error: 'Tiempo para aceptar agotado' });
     }
 
-    pedido.deliveryId = req.userId;
+    pedido.deliveryId = getDeliveryId(req);
     pedido.estado = 'asignado_delivery';
     pedido.aceptadoEn = new Date();
     await pedido.save();
 
     await DeliveryStats.create({
-      deliveryId: req.userId,
+      deliveryId: getDeliveryId(req),
       pedidoId: pedido._id,
       montoGanado: pedido.costoDelivery,
       kmRecorridos: 0,
@@ -137,7 +146,7 @@ router.post('/pedidos/:id/aceptar', async (req, res) => {
 // Mis pedidos asignados (en camino, etc.) con datos de cliente y farmacia (incl. coordenadas farmacia)
 router.get('/mis-pedidos', async (req, res) => {
   try {
-    const pedidos = await Pedido.find({ deliveryId: req.userId })
+    const pedidos = await Pedido.find({ deliveryId: getDeliveryId(req) })
       .populate('clienteId', 'nombre apellido telefono direccion estado municipio')
       .populate('farmaciaId', 'nombreFarmacia direccion telefono estado lat lng')
       .sort({ aceptadoEn: -1 });
@@ -155,7 +164,7 @@ router.patch('/pedidos/:id/eta',
     try {
       const err = validationResult(req);
       if (!err.isEmpty()) return res.status(400).json({ error: 'eta inválida (ISO 8601)', details: err.array() });
-      const pedido = await Pedido.findOne({ _id: req.params.id, deliveryId: req.userId });
+      const pedido = await Pedido.findOne({ _id: req.params.id, deliveryId: getDeliveryId(req) });
       if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
       pedido.etaEntrega = new Date(req.body.eta);
       await pedido.save();
@@ -172,7 +181,7 @@ router.patch('/pedidos/:id/estado',
   body('estado').isIn(['en_camino', 'entregado']),
   async (req, res) => {
     try {
-      const pedido = await Pedido.findOne({ _id: req.params.id, deliveryId: req.userId });
+      const pedido = await Pedido.findOne({ _id: req.params.id, deliveryId: getDeliveryId(req) });
       if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
 
       pedido.estado = req.body.estado;
@@ -199,7 +208,7 @@ router.patch('/pedidos/:id/estado',
 router.patch('/pedidos/:id/km', body('km').isFloat({ min: 0 }), async (req, res) => {
   try {
     await DeliveryStats.updateOne(
-      { pedidoId: req.params.id, deliveryId: req.userId },
+      { pedidoId: req.params.id, deliveryId: getDeliveryId(req) },
       { $set: { kmRecorridos: req.body.km } }
     );
     res.json({ ok: true });
@@ -213,7 +222,7 @@ router.patch('/pedidos/:id/km', body('km').isFloat({ min: 0 }), async (req, res)
 router.get('/estadisticas', async (req, res) => {
   try {
     const stats = await DeliveryStats.aggregate([
-      { $match: { deliveryId: req.userId } },
+      { $match: { deliveryId: getDeliveryId(req) } },
       {
         $group: {
           _id: null,

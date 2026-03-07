@@ -22,6 +22,12 @@ const router = Router();
 router.use(auth, requireRole('farmacia'), attachUser);
 
 function getFarmaciaId(req) {
+  // Master entrando como farmacia: debe enviar X-Farmacia-Id o ?farmaciaId=
+  if (req.role === 'master') {
+    const id = req.headers['x-farmacia-id'] || req.query.farmaciaId;
+    if (id && mongoose.Types.ObjectId.isValid(id)) return new mongoose.Types.ObjectId(id);
+    return null;
+  }
   return req.user?.farmaciaId?._id || req.user?.farmaciaId;
 }
 
@@ -41,13 +47,16 @@ function calcularPrecioConDescuento(precioBase, descuentoPorcentaje) {
 }
 
 // --- Plan Pro ---
-// GET /api/farmacia/plan-pro/estado → { activo: boolean }
+// GET /api/farmacia/plan-pro/estado → { activo: boolean }. Master sin farmacia elegida: activo true (acceso total).
 router.get('/plan-pro/estado', async (req, res) => {
   try {
     const farmaciaId = getFarmaciaId(req);
-    if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+    if (!farmaciaId) {
+      if (req.role === 'master') return res.json({ activo: true });
+      return res.status(403).json({ error: 'Farmacia no asignada' });
+    }
     const farmacia = await Farmacia.findById(farmaciaId).select('planProActivo');
-    res.json({ activo: !!farmacia?.planProActivo });
+    res.json({ activo: !!farmacia?.planProActivo || req.role === 'master' });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener estado Plan Pro' });
