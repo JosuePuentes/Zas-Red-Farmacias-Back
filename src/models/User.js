@@ -17,6 +17,8 @@ const userSchema = new mongoose.Schema({
   cedula: String,
   apellido: String,
   direccion: String,
+  estado: String,   // Estado de Venezuela (ej: Miranda)
+  municipio: String,
   telefono: String,
 
   // Farmacia (referencia al documento Farmacia)

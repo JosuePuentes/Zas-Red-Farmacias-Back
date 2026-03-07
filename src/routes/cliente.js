@@ -273,9 +273,12 @@ router.get('/checkout/resumen', async (req, res) => {
   }
 });
 
-// Procesar compra: subir comprobante y crear pedido(s) por farmacia
+// Procesar compra: subir comprobante y crear pedido(s) por farmacia. Body puede incluir direccionEntrega, latEntrega, lngEntrega.
 router.post('/checkout/procesar',
   body('metodoPago').isIn(['pago_movil', 'transferencia', 'zelle', 'binance']),
+  body('direccionEntrega').optional().trim(),
+  body('latEntrega').optional().isFloat(),
+  body('lngEntrega').optional().isFloat(),
   upload.single('comprobante'),
   async (req, res) => {
     try {
@@ -289,9 +292,9 @@ router.post('/checkout/procesar',
       if (!items.length) return res.status(400).json({ error: 'Carrito vacío' });
 
       const comprobanteUrl = `/uploads/${req.file.filename}`;
-      const direccionEntrega = cliente.direccion || '';
-      const lat = cliente.ultimaLat;
-      const lng = cliente.ultimaLng;
+      const direccionEntrega = (req.body.direccionEntrega && String(req.body.direccionEntrega).trim()) || cliente.direccion || '';
+      const lat = req.body.latEntrega != null ? Number(req.body.latEntrega) : cliente.ultimaLat;
+      const lng = req.body.lngEntrega != null ? Number(req.body.lngEntrega) : cliente.ultimaLng;
 
       // Agrupar por farmacia
       const porFarmacia = new Map();
@@ -377,16 +380,46 @@ router.patch('/ubicacion', body('lat').isFloat(), body('lng').isFloat(), async (
   }
 });
 
-// Mis pedidos
+// Mis pedidos (incluye etaEntrega para mostrar ETA al cliente)
 router.get('/mis-pedidos', async (req, res) => {
   try {
     const pedidos = await Pedido.find({ clienteId: req.userId })
-      .populate('farmaciaId', 'nombreFarmacia')
+      .populate('farmaciaId', 'nombreFarmacia direccion estado lat lng')
+      .populate('deliveryId', 'nombre ultimaLat ultimaLng')
       .sort({ createdAt: -1 });
     res.json(pedidos);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar pedidos' });
+  }
+});
+
+// Seguimiento de un pedido: estado, dirección y coords de entrega, ETA, posición del delivery en tiempo real
+router.get('/pedidos/:id/seguimiento', async (req, res) => {
+  try {
+    const pedido = await Pedido.findOne({ _id: req.params.id, clienteId: req.userId })
+      .populate('farmaciaId', 'nombreFarmacia direccion telefono lat lng')
+      .populate('deliveryId', 'nombre telefono ultimaLat ultimaLng');
+    if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+    const p = pedido.toObject();
+    res.json({
+      id: p._id,
+      estado: p.estado,
+      direccionEntrega: p.direccionEntrega,
+      latEntrega: p.lat,
+      lngEntrega: p.lng,
+      etaEntrega: p.etaEntrega,
+      farmacia: p.farmaciaId,
+      delivery: p.deliveryId ? {
+        nombre: p.deliveryId.nombre,
+        telefono: p.deliveryId.telefono,
+        lat: p.deliveryId.ultimaLat,
+        lng: p.deliveryId.ultimaLng,
+      } : null,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener seguimiento' });
   }
 });
 

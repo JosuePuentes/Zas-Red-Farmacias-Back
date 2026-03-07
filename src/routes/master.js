@@ -36,12 +36,14 @@ router.post('/farmacias',
   body('telefono').notEmpty().trim(),
   body('estado').isIn(ESTADOS_VENEZUELA),
   body('porcentajePrecio').isFloat({ min: 0, max: 100 }),
+  body('lat').optional().isFloat(),
+  body('lng').optional().isFloat(),
   async (req, res) => {
     try {
       const err = validationResult(req);
       if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
 
-      const { email, password, nombreFarmacia, rif, gerenteEncargado, direccion, telefono, estado, porcentajePrecio } = req.body;
+      const { email, password, nombreFarmacia, rif, gerenteEncargado, direccion, telefono, estado, porcentajePrecio, lat, lng } = req.body;
 
       const exists = await User.findOne({ email: email.toLowerCase() });
       if (exists) return res.status(400).json({ error: 'Ya existe un usuario con ese correo' });
@@ -61,6 +63,8 @@ router.post('/farmacias',
         direccion,
         telefono,
         estado,
+        lat: lat != null ? Number(lat) : undefined,
+        lng: lng != null ? Number(lng) : undefined,
         porcentajePrecio: Number(porcentajePrecio),
       });
 
@@ -131,6 +135,8 @@ router.post('/solicitudes-farmacia/:id/aprobar', async (req, res) => {
       direccion: sol.direccion,
       telefono: sol.telefono,
       estado: estadoVzla,
+      lat: sol.lat,
+      lng: sol.lng,
       porcentajePrecio: 0,
     });
 

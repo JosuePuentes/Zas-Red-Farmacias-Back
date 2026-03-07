@@ -64,7 +64,7 @@ router.post('/login',
   }
 );
 
-// Registro de cliente desde la home
+// Registro de cliente desde la home (body: estado, municipio, lat, lng opcionales)
 router.post('/register/cliente',
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 6 }),
@@ -72,13 +72,17 @@ router.post('/register/cliente',
   body('nombre').notEmpty().trim(),
   body('apellido').notEmpty().trim(),
   body('direccion').notEmpty().trim(),
+  body('estado').optional().trim(),
+  body('municipio').optional().trim(),
+  body('lat').optional().isFloat(),
+  body('lng').optional().isFloat(),
   body('telefono').optional().trim(),
   async (req, res) => {
     try {
       const err = validationResult(req);
       if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
 
-      const { email, password, cedula, nombre, apellido, direccion, telefono } = req.body;
+      const { email, password, cedula, nombre, apellido, direccion, estado, municipio, lat, lng, telefono } = req.body;
       const exists = await User.findOne({ email: email.toLowerCase() });
       if (exists) return res.status(400).json({ error: 'Ya existe un usuario con ese correo' });
 
@@ -90,7 +94,11 @@ router.post('/register/cliente',
         nombre,
         apellido,
         direccion,
+        estado: estado || '',
+        municipio: municipio || '',
         telefono: telefono || '',
+        ultimaLat: lat != null ? Number(lat) : undefined,
+        ultimaLng: lng != null ? Number(lng) : undefined,
       });
 
       const token = jwt.sign(
@@ -109,6 +117,8 @@ router.post('/register/cliente',
           apellido: user.apellido,
           cedula: user.cedula,
           direccion: user.direccion,
+          estado: user.estado,
+          municipio: user.municipio,
           telefono: user.telefono,
         },
       });

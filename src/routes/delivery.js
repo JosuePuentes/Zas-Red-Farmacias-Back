@@ -11,6 +11,26 @@ const router = Router();
 
 router.use(auth, requireRole('delivery'), attachUser);
 
+// Actualizar posición del delivery en tiempo real (para que el cliente vea dónde va)
+router.patch('/ubicacion',
+  body('lat').isFloat(),
+  body('lng').isFloat(),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) return res.status(400).json({ error: 'lat y lng requeridos', details: err.array() });
+      await User.updateOne(
+        { _id: req.userId },
+        { ultimaLat: req.body.lat, ultimaLng: req.body.lng }
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al actualizar ubicación' });
+    }
+  }
+);
+
 // Activar/desactivar recepción de pedidos
 router.patch('/activo', body('activo').isBoolean(), async (req, res) => {
   try {
@@ -40,8 +60,8 @@ router.get('/pedidos-disponibles', async (req, res) => {
       estado: 'validado',
       deliveryId: null,
     })
-      .populate('clienteId', 'nombre apellido telefono direccion')
-      .populate('farmaciaId', 'nombreFarmacia direccion telefono')
+      .populate('clienteId', 'nombre apellido telefono direccion estado municipio')
+      .populate('farmaciaId', 'nombreFarmacia direccion telefono estado lat lng')
       .sort({ createdAt: 1 });
 
     // Añadir tiempo límite 1 min si no existe
@@ -75,8 +95,8 @@ router.post('/pedidos/:id/aceptar', async (req, res) => {
     }
 
     const pedido = await Pedido.findById(req.params.id)
-      .populate('farmaciaId', 'nombreFarmacia direccion telefono')
-      .populate('clienteId', 'nombre apellido telefono direccion');
+      .populate('farmaciaId', 'nombreFarmacia direccion telefono estado lat lng')
+      .populate('clienteId', 'nombre apellido telefono direccion estado municipio');
 
     if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
     if (pedido.estado !== 'validado' || pedido.deliveryId) {
@@ -114,12 +134,12 @@ router.post('/pedidos/:id/aceptar', async (req, res) => {
   }
 });
 
-// Mis pedidos asignados (en camino, etc.)
+// Mis pedidos asignados (en camino, etc.) con datos de cliente y farmacia (incl. coordenadas farmacia)
 router.get('/mis-pedidos', async (req, res) => {
   try {
     const pedidos = await Pedido.find({ deliveryId: req.userId })
-      .populate('clienteId', 'nombre apellido telefono direccion')
-      .populate('farmaciaId', 'nombreFarmacia direccion telefono')
+      .populate('clienteId', 'nombre apellido telefono direccion estado municipio')
+      .populate('farmaciaId', 'nombreFarmacia direccion telefono estado lat lng')
       .sort({ aceptadoEn: -1 });
     res.json(pedidos);
   } catch (e) {
@@ -127,6 +147,25 @@ router.get('/mis-pedidos', async (req, res) => {
     res.status(500).json({ error: 'Error al listar pedidos' });
   }
 });
+
+// Actualizar ETA de entrega para un pedido (el cliente puede mostrarla)
+router.patch('/pedidos/:id/eta',
+  body('eta').isISO8601(),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) return res.status(400).json({ error: 'eta inválida (ISO 8601)', details: err.array() });
+      const pedido = await Pedido.findOne({ _id: req.params.id, deliveryId: req.userId });
+      if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+      pedido.etaEntrega = new Date(req.body.eta);
+      await pedido.save();
+      res.json(pedido);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al actualizar ETA' });
+    }
+  }
+);
 
 // Marcar en camino / entregado
 router.patch('/pedidos/:id/estado',
