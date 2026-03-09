@@ -2,19 +2,32 @@ import { Router } from 'express';
 import { body, validationResult } from 'express-validator';
 import mongoose from 'mongoose';
 import xlsx from 'xlsx';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import Farmacia from '../models/Farmacia.js';
-import Producto from '../models/Producto.js';
+import Producto, { CATEGORIAS_PRODUCTO } from '../models/Producto.js';
 import Pedido from '../models/Pedido.js';
 import Notificacion from '../models/Notificacion.js';
 import User from '../models/User.js';
+import SolicitudPlanPro from '../models/SolicitudPlanPro.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads');
 
 const router = Router();
 
 router.use(auth, requireRole('farmacia'), attachUser);
 
 function getFarmaciaId(req) {
+  // Master entrando como farmacia: debe enviar X-Farmacia-Id o ?farmaciaId=
+  if (req.role === 'master') {
+    const id = req.headers['x-farmacia-id'] || req.query.farmaciaId;
+    if (id && mongoose.Types.ObjectId.isValid(id)) return new mongoose.Types.ObjectId(id);
+    return null;
+  }
   return req.user?.farmaciaId?._id || req.user?.farmaciaId;
 }
 
@@ -30,8 +43,74 @@ function calcularPrecioConDescuento(precioBase, descuentoPorcentaje) {
   const base = Number(precioBase) || 0;
   const pct = clampPercentage(descuentoPorcentaje);
   const factor = 1 - pct / 100;
-  return Math.round(base * 100 * factor) / 100;
+  return Math.round(base * factor * 100) / 100;
 }
+
+// --- Plan Pro ---
+// GET /api/farmacia/plan-pro/estado → { activo: boolean }. Master sin farmacia elegida: activo true (acceso total).
+router.get('/plan-pro/estado', async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    if (!farmaciaId) {
+      if (req.role === 'master') return res.json({ activo: true });
+      return res.status(403).json({ error: 'Farmacia no asignada' });
+    }
+    const farmacia = await Farmacia.findById(farmaciaId).select('planProActivo');
+    res.json({ activo: !!farmacia?.planProActivo || req.role === 'master' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener estado Plan Pro' });
+  }
+});
+
+// POST /api/farmacia/plan-pro/solicitud — body: bancoEmisor, numeroReferencia, comprobanteBase64 (o multipart comprobante)
+router.post('/plan-pro/solicitud',
+  body('bancoEmisor').notEmpty().trim(),
+  body('numeroReferencia').notEmpty().trim(),
+  upload.single('comprobante'),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
+
+      const farmaciaId = getFarmaciaId(req);
+      if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+
+      const { bancoEmisor, numeroReferencia, comprobanteBase64 } = req.body;
+      let comprobanteUrl = null;
+
+      if (req.file) {
+        comprobanteUrl = `/uploads/${req.file.filename}`;
+      } else if (comprobanteBase64 && typeof comprobanteBase64 === 'string') {
+        const base64 = comprobanteBase64.replace(/^data:image\/\w+;base64,/, '');
+        const buf = Buffer.from(base64, 'base64');
+        const ext = (comprobanteBase64.match(/^data:image\/(\w+);/) || [])[1] || 'jpg';
+        const filename = `planpro-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const filepath = path.join(uploadDir, filename);
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+        fs.writeFileSync(filepath, buf);
+        comprobanteUrl = `/uploads/${filename}`;
+      }
+
+      if (!comprobanteUrl) {
+        return res.status(400).json({ error: 'Debe enviar comprobante (multipart) o comprobanteBase64' });
+      }
+
+      const solicitud = await SolicitudPlanPro.create({
+        farmaciaId,
+        bancoEmisor: String(bancoEmisor).trim(),
+        numeroReferencia: String(numeroReferencia).trim(),
+        comprobanteUrl,
+        estado: 'pendiente',
+      });
+
+      res.status(201).json({ message: 'Solicitud Plan Pro enviada', id: solicitud._id });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al enviar solicitud Plan Pro' });
+    }
+  }
+);
 
 // Dashboard: total productos vendidos, total $ vendidos, total clientes
 router.get('/dashboard', async (req, res) => {
@@ -183,13 +262,17 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
       const precioConPorcentaje = precio * (1 + porcentaje);
       const precioConDescuento = calcularPrecioConDescuento(precioConPorcentaje, descuentoPorcentaje);
 
+      const categoria = CATEGORIAS_PRODUCTO.includes(categoriaRaw) ? categoriaRaw : undefined;
+
       const existing = await Producto.findOne({ farmaciaId, codigo });
       if (existing) {
         existing.descripcion = descripcion;
         existing.marca = marca;
         existing.precioBase = precioConPorcentaje;
         existing.existencia = existencia;
-        if (categoriaRaw) existing.categoria = categoriaRaw;
+        if (categoria) {
+          existing.categoria = categoria;
+        }
         existing.descuentoPorcentaje = descuentoPorcentaje;
         existing.precioConPorcentaje = descuentoPorcentaje ? precioConDescuento : precioConPorcentaje;
         await existing.save();
@@ -200,7 +283,7 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
           codigo,
           descripcion,
           marca,
-          categoria: categoriaRaw || undefined,
+          categoria,
           precioBase: precioConPorcentaje,
           descuentoPorcentaje,
           precioConPorcentaje: descuentoPorcentaje ? precioConDescuento : precioConPorcentaje,

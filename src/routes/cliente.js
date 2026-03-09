@@ -15,6 +15,42 @@ const router = Router();
 
 router.use(auth, requireRole('cliente'), attachUser);
 
+function getClienteId(req) {
+  if (req.role === 'master' && (req.headers['x-cliente-id'] || req.query.clienteId)) {
+    const id = req.headers['x-cliente-id'] || req.query.clienteId;
+    if (mongoose.Types.ObjectId.isValid(id)) return new mongoose.Types.ObjectId(id);
+  }
+  return req.userId;
+}
+
+function clampPercentage(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+function getDescuento(producto) {
+  if (typeof producto.descuentoPorcentaje === 'number') {
+    return clampPercentage(producto.descuentoPorcentaje);
+  }
+  return 0;
+}
+
+function getPrecioConPorcentaje(producto) {
+  const base = Number(producto.precioBase) || 0;
+  const descuento = getDescuento(producto);
+  if (typeof producto.precioConPorcentaje === 'number') {
+    return Math.round(producto.precioConPorcentaje * 100) / 100;
+  }
+  if (descuento > 0) {
+    const factor = 1 - descuento / 100;
+    return Math.round(base * factor * 100) / 100;
+  }
+  return base;
+}
+
 // Catálogo: productos con filtro por estado (Venezuela). No se muestra nombre de farmacia.
 router.get('/productos', async (req, res) => {
   try {
@@ -49,6 +85,7 @@ router.get('/productos', async (req, res) => {
       principioActivo: p.principioActivo,
       presentacion: p.presentacion,
       marca: p.marca,
+      categoria: p.categoria,
       precio: p.precioBase,
       existencia: p.existencia,
       foto: p.foto,
@@ -62,34 +99,6 @@ router.get('/productos', async (req, res) => {
     res.status(500).json({ error: 'Error al listar productos' });
   }
 });
-
-function clampPercentage(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  if (n < 0) return 0;
-  if (n > 100) return 100;
-  return n;
-}
-
-function getDescuento(producto) {
-  if (typeof producto.descuentoPorcentaje === 'number') {
-    return clampPercentage(producto.descuentoPorcentaje);
-  }
-  return 0;
-}
-
-function getPrecioConPorcentaje(producto) {
-  const base = Number(producto.precioBase) || 0;
-  const descuento = getDescuento(producto);
-  if (typeof producto.precioConPorcentaje === 'number') {
-    return Math.round(producto.precioConPorcentaje * 100) / 100;
-  }
-  if (descuento > 0) {
-    const factor = 1 - descuento / 100;
-    return Math.round(base * factor * 100) / 100;
-  }
-  return base;
-}
 
 // Catálogo para nuevo frontend: mismos productos con información de descuentos
 router.get('/catalogo', async (req, res) => {
@@ -137,8 +146,7 @@ router.get('/catalogo', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Error al listar catálogo' });
   }
-}
-);
+});
 
 // Estados para filtro
 router.get('/estados', (req, res) => {
@@ -160,7 +168,7 @@ router.post('/carrito',
       }
 
       let item = await Carrito.findOne({
-        clienteId: req.userId,
+        clienteId: getClienteId(req),
         productoId: req.body.productoId,
       });
       if (item) {
@@ -168,13 +176,13 @@ router.post('/carrito',
         await item.save();
       } else {
         item = await Carrito.create({
-          clienteId: req.userId,
+          clienteId: getClienteId(req),
           productoId: req.body.productoId,
           cantidad: Math.min(req.body.cantidad, producto.existencia),
         });
       }
 
-      const carrito = await Carrito.find({ clienteId: req.userId })
+      const carrito = await Carrito.find({ clienteId: getClienteId(req) })
         .populate('productoId');
       res.json(carrito);
     } catch (e) {
@@ -187,7 +195,7 @@ router.post('/carrito',
 // Carrito: listar
 router.get('/carrito', async (req, res) => {
   try {
-    const items = await Carrito.find({ clienteId: req.userId })
+    const items = await Carrito.find({ clienteId: getClienteId(req) })
       .populate('productoId');
     res.json(items);
   } catch (e) {
@@ -204,16 +212,16 @@ router.patch('/carrito/:productoId',
       const err = validationResult(req);
       if (!err.isEmpty()) return res.status(400).json({ error: 'Cantidad inválida' });
       if (req.body.cantidad === 0) {
-        await Carrito.deleteOne({ clienteId: req.userId, productoId: req.params.productoId });
+        await Carrito.deleteOne({ clienteId: getClienteId(req), productoId: req.params.productoId });
       } else {
         const producto = await Producto.findById(req.params.productoId);
         if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
         await Carrito.updateOne(
-          { clienteId: req.userId, productoId: req.params.productoId },
+          { clienteId: getClienteId(req), productoId: req.params.productoId },
           { cantidad: Math.min(req.body.cantidad, producto.existencia) }
         );
       }
-      const carrito = await Carrito.find({ clienteId: req.userId }).populate('productoId');
+      const carrito = await Carrito.find({ clienteId: getClienteId(req) }).populate('productoId');
       res.json(carrito);
     } catch (e) {
       console.error(e);
@@ -225,8 +233,8 @@ router.patch('/carrito/:productoId',
 // Carrito: eliminar item
 router.delete('/carrito/:productoId', async (req, res) => {
   try {
-    await Carrito.deleteOne({ clienteId: req.userId, productoId: req.params.productoId });
-    const carrito = await Carrito.find({ clienteId: req.userId }).populate('productoId');
+    await Carrito.deleteOne({ clienteId: getClienteId(req), productoId: req.params.productoId });
+    const carrito = await Carrito.find({ clienteId: getClienteId(req) }).populate('productoId');
     res.json(carrito);
   } catch (e) {
     console.error(e);
@@ -237,8 +245,8 @@ router.delete('/carrito/:productoId', async (req, res) => {
 // Resumen checkout: total + costo delivery (según lógica; aquí se puede usar distancia o fijo)
 router.get('/checkout/resumen', async (req, res) => {
   try {
-    const items = await Carrito.find({ clienteId: req.userId }).populate('productoId');
-    const cliente = await User.findById(req.userId);
+    const items = await Carrito.find({ clienteId: getClienteId(req) }).populate('productoId');
+    const cliente = await User.findById(getClienteId(req));
     let subtotal = 0;
     const byFarmacia = new Map();
 
@@ -273,9 +281,12 @@ router.get('/checkout/resumen', async (req, res) => {
   }
 });
 
-// Procesar compra: subir comprobante y crear pedido(s) por farmacia
+// Procesar compra: subir comprobante y crear pedido(s) por farmacia. Body puede incluir direccionEntrega, latEntrega, lngEntrega.
 router.post('/checkout/procesar',
   body('metodoPago').isIn(['pago_movil', 'transferencia', 'zelle', 'binance']),
+  body('direccionEntrega').optional().trim(),
+  body('latEntrega').optional().isFloat(),
+  body('lngEntrega').optional().isFloat(),
   upload.single('comprobante'),
   async (req, res) => {
     try {
@@ -284,14 +295,14 @@ router.post('/checkout/procesar',
 
       if (!req.file) return res.status(400).json({ error: 'Debe cargar el comprobante de pago' });
 
-      const cliente = await User.findById(req.userId);
-      const items = await Carrito.find({ clienteId: req.userId }).populate('productoId');
+      const cliente = await User.findById(getClienteId(req));
+      const items = await Carrito.find({ clienteId: getClienteId(req) }).populate('productoId');
       if (!items.length) return res.status(400).json({ error: 'Carrito vacío' });
 
       const comprobanteUrl = `/uploads/${req.file.filename}`;
-      const direccionEntrega = cliente.direccion || '';
-      const lat = cliente.ultimaLat;
-      const lng = cliente.ultimaLng;
+      const direccionEntrega = (req.body.direccionEntrega && String(req.body.direccionEntrega).trim()) || cliente.direccion || '';
+      const lat = req.body.latEntrega != null ? Number(req.body.latEntrega) : cliente.ultimaLat;
+      const lng = req.body.lngEntrega != null ? Number(req.body.lngEntrega) : cliente.ultimaLng;
 
       // Agrupar por farmacia
       const porFarmacia = new Map();
@@ -326,7 +337,7 @@ router.post('/checkout/procesar',
         const total = Math.round((subtotal + costoDelivery) * 100) / 100;
 
         const pedido = await Pedido.create({
-          clienteId: req.userId,
+          clienteId: getClienteId(req),
           farmaciaId: new mongoose.Types.ObjectId(farmaciaId),
           items: lineas,
           subtotal,
@@ -353,7 +364,7 @@ router.post('/checkout/procesar',
         }
       }
 
-      await Carrito.deleteMany({ clienteId: req.userId });
+      await Carrito.deleteMany({ clienteId: getClienteId(req) });
 
       res.status(201).json({ message: 'Compra procesada', pedidos: pedidosCreados });
     } catch (e) {
@@ -367,7 +378,7 @@ router.post('/checkout/procesar',
 router.patch('/ubicacion', body('lat').isFloat(), body('lng').isFloat(), async (req, res) => {
   try {
     await User.updateOne(
-      { _id: req.userId },
+      { _id: getClienteId(req) },
       { ultimaLat: req.body.lat, ultimaLng: req.body.lng }
     );
     res.json({ ok: true });
@@ -377,16 +388,46 @@ router.patch('/ubicacion', body('lat').isFloat(), body('lng').isFloat(), async (
   }
 });
 
-// Mis pedidos
+// Mis pedidos (incluye etaEntrega para mostrar ETA al cliente)
 router.get('/mis-pedidos', async (req, res) => {
   try {
-    const pedidos = await Pedido.find({ clienteId: req.userId })
-      .populate('farmaciaId', 'nombreFarmacia')
+    const pedidos = await Pedido.find({ clienteId: getClienteId(req) })
+      .populate('farmaciaId', 'nombreFarmacia direccion estado lat lng')
+      .populate('deliveryId', 'nombre ultimaLat ultimaLng')
       .sort({ createdAt: -1 });
     res.json(pedidos);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar pedidos' });
+  }
+});
+
+// Seguimiento de un pedido: estado, dirección y coords de entrega, ETA, posición del delivery en tiempo real
+router.get('/pedidos/:id/seguimiento', async (req, res) => {
+  try {
+    const pedido = await Pedido.findOne({ _id: req.params.id, clienteId: getClienteId(req) })
+      .populate('farmaciaId', 'nombreFarmacia direccion telefono lat lng')
+      .populate('deliveryId', 'nombre telefono ultimaLat ultimaLng');
+    if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+    const p = pedido.toObject();
+    res.json({
+      id: p._id,
+      estado: p.estado,
+      direccionEntrega: p.direccionEntrega,
+      latEntrega: p.lat,
+      lngEntrega: p.lng,
+      etaEntrega: p.etaEntrega,
+      farmacia: p.farmaciaId,
+      delivery: p.deliveryId ? {
+        nombre: p.deliveryId.nombre,
+        telefono: p.deliveryId.telefono,
+        lat: p.deliveryId.ultimaLat,
+        lng: p.deliveryId.ultimaLng,
+      } : null,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener seguimiento' });
   }
 });
 

@@ -10,6 +10,8 @@ const solicitudFarmaciaSchema = new mongoose.Schema({
   password: { type: String, required: true },
   estado: { type: String, enum: ['pendiente', 'aprobado', 'denegado'], default: 'pendiente' },
   estadoUbicacion: { type: String, trim: true }, // Estado de Venezuela (ej: Miranda)
+  lat: Number,
+  lng: Number,
   usuarioId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

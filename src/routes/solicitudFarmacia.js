@@ -16,12 +16,14 @@ router.post('/',
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 6 }),
   body('estadoUbicacion').optional().trim(),
+  body('lat').optional().isFloat(),
+  body('lng').optional().isFloat(),
   async (req, res) => {
     try {
       const err = validationResult(req);
       if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
 
-      const { rif, nombreFarmacia, direccion, nombreEncargado, telefono, email, password, estadoUbicacion } = req.body;
+      const { rif, nombreFarmacia, direccion, nombreEncargado, telefono, email, password, estadoUbicacion, lat, lng } = req.body;
       const emailNorm = email.toLowerCase().trim();
 
       const yaUsuario = await User.findOne({ email: emailNorm });
@@ -41,6 +43,8 @@ router.post('/',
         password: passwordHash,
         estado: 'pendiente',
         estadoUbicacion: estadoUbicacion?.trim() || '',
+        lat: lat != null ? Number(lat) : undefined,
+        lng: lng != null ? Number(lng) : undefined,
       });
 
       res.status(201).json({

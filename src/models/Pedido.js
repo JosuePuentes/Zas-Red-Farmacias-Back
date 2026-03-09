@@ -16,8 +16,9 @@ const pedidoSchema = new mongoose.Schema({
   costoDelivery: { type: Number, required: true, default: 0 },
   total: { type: Number, required: true },
   direccionEntrega: { type: String, required: true },
-  lat: Number,
-  lng: Number,
+  lat: Number,      // latEntrega: coordenadas de entrega al cliente
+  lng: Number,      // lngEntrega
+  etaEntrega: Date, // ETA estimada para el cliente (actualizable por delivery)
   metodoPago: { type: String, enum: ['pago_movil', 'transferencia', 'zelle', 'binance'] },
   comprobanteUrl: String,
   estado: {

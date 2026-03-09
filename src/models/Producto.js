@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const CATEGORIAS_PRODUCTO = [
+export const CATEGORIAS_PRODUCTO = [
   'Analgésicos y Antipiréticos',
   'Antibióticos',
   'Antiinflamatorios',
@@ -26,7 +26,7 @@ const productoSchema = new mongoose.Schema({
   principioActivo: String,
   presentacion: String,
   marca: String,
-  categoria: { type: String, enum: CATEGORIAS_PRODUCTO, default: undefined },
+  categoria: { type: String, enum: CATEGORIAS_PRODUCTO, required: false },
   precioBase: { type: Number, required: true },
   descuentoPorcentaje: { type: Number, default: 0 },
   precioConPorcentaje: { type: Number },

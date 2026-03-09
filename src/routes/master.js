@@ -4,12 +4,24 @@ import User from '../models/User.js';
 import Farmacia from '../models/Farmacia.js';
 import SolicitudDelivery from '../models/SolicitudDelivery.js';
 import SolicitudFarmacia from '../models/SolicitudFarmacia.js';
+import SolicitudPlanPro from '../models/SolicitudPlanPro.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
 
 const router = Router();
 
 router.use(auth, requireRole('master'));
+
+// Listar todas las farmacias (para que master elija "entrar como" una farmacia)
+router.get('/farmacias', async (req, res) => {
+  try {
+    const list = await Farmacia.find().select('nombreFarmacia rif estado direccion telefono planProActivo').sort({ nombreFarmacia: 1 });
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar farmacias' });
+  }
+});
 
 // Listar todos los usuarios (para ver tipo: cliente, delivery, farmacia)
 router.get('/usuarios', async (req, res) => {
@@ -36,12 +48,14 @@ router.post('/farmacias',
   body('telefono').notEmpty().trim(),
   body('estado').isIn(ESTADOS_VENEZUELA),
   body('porcentajePrecio').isFloat({ min: 0, max: 100 }),
+  body('lat').optional().isFloat(),
+  body('lng').optional().isFloat(),
   async (req, res) => {
     try {
       const err = validationResult(req);
       if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
 
-      const { email, password, nombreFarmacia, rif, gerenteEncargado, direccion, telefono, estado, porcentajePrecio } = req.body;
+      const { email, password, nombreFarmacia, rif, gerenteEncargado, direccion, telefono, estado, porcentajePrecio, lat, lng } = req.body;
 
       const exists = await User.findOne({ email: email.toLowerCase() });
       if (exists) return res.status(400).json({ error: 'Ya existe un usuario con ese correo' });
@@ -61,6 +75,8 @@ router.post('/farmacias',
         direccion,
         telefono,
         estado,
+        lat: lat != null ? Number(lat) : undefined,
+        lng: lng != null ? Number(lng) : undefined,
         porcentajePrecio: Number(porcentajePrecio),
       });
 
@@ -131,6 +147,8 @@ router.post('/solicitudes-farmacia/:id/aprobar', async (req, res) => {
       direccion: sol.direccion,
       telefono: sol.telefono,
       estado: estadoVzla,
+      lat: sol.lat,
+      lng: sol.lng,
       porcentajePrecio: 0,
     });
 
@@ -155,6 +173,50 @@ router.post('/solicitudes-farmacia/:id/denegar', async (req, res) => {
       { estado: 'denegado' }
     );
     res.json({ message: 'Solicitud denegada' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al denegar' });
+  }
+});
+
+// --- Plan Pro ---
+// GET /api/master/solicitudes-plan-pro
+router.get('/solicitudes-plan-pro', async (req, res) => {
+  try {
+    const list = await SolicitudPlanPro.find()
+      .populate('farmaciaId', 'nombreFarmacia rif estado')
+      .sort({ createdAt: -1 });
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar solicitudes Plan Pro' });
+  }
+});
+
+// POST /api/master/solicitudes-plan-pro/:id/aprobar
+router.post('/solicitudes-plan-pro/:id/aprobar', async (req, res) => {
+  try {
+    const sol = await SolicitudPlanPro.findById(req.params.id);
+    if (!sol || sol.estado !== 'pendiente') {
+      return res.status(400).json({ error: 'Solicitud no encontrada o ya procesada' });
+    }
+    await Farmacia.updateOne({ _id: sol.farmaciaId }, { planProActivo: true });
+    await SolicitudPlanPro.updateOne({ _id: req.params.id }, { estado: 'aprobado' });
+    res.json({ message: 'Plan Pro aprobado', farmaciaId: sol.farmaciaId });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al aprobar' });
+  }
+});
+
+// POST /api/master/solicitudes-plan-pro/:id/denegar
+router.post('/solicitudes-plan-pro/:id/denegar', async (req, res) => {
+  try {
+    await SolicitudPlanPro.updateOne(
+      { _id: req.params.id, estado: 'pendiente' },
+      { estado: 'denegado' }
+    );
+    res.json({ message: 'Solicitud Plan Pro denegada' });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al denegar' });
