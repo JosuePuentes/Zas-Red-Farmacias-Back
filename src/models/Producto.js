@@ -1,5 +1,24 @@
 import mongoose from 'mongoose';
 
+const CATEGORIAS_PRODUCTO = [
+  'Analgésicos y Antipiréticos',
+  'Antibióticos',
+  'Antiinflamatorios',
+  'Antigripales y Tos',
+  'Cuidados Especializados',
+  'Cardiovascular',
+  'Gastrointestinal',
+  'Salud Visual',
+  'Diabetes',
+  'Salud y Bienestar',
+  'Vitaminas y Suplementos',
+  'Cuidado Personal',
+  'Primeros Auxilios',
+  'Mamá y Bebé',
+  'Maternidad',
+  'Infantil',
+];
+
 const productoSchema = new mongoose.Schema({
   farmaciaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Farmacia', required: true },
   codigo: { type: String, required: true },
@@ -7,6 +26,7 @@ const productoSchema = new mongoose.Schema({
   principioActivo: String,
   presentacion: String,
   marca: String,
+  categoria: { type: String, enum: CATEGORIAS_PRODUCTO, default: undefined },
   precioBase: { type: Number, required: true },
   descuentoPorcentaje: { type: Number, default: 0 },
   precioConPorcentaje: { type: Number },

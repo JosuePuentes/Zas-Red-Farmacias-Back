@@ -122,6 +122,7 @@ router.get('/catalogo', async (req, res) => {
         principioActivo: p.principioActivo,
         presentacion: p.presentacion,
         marca: p.marca,
+        categoria: p.categoria,
         precio: precioBase,
         descuentoPorcentaje: descuento,
         precioConPorcentaje: precioCon,

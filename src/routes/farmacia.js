@@ -173,6 +173,7 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
       const marca = String(row.marca ?? row.Marca ?? '').trim();
       const precio = Number(row.precio ?? row.Precio ?? 0);
       const existencia = Number(row.existencia ?? row.Existencia ?? 0);
+      const categoriaRaw = String(row.categoria ?? row.Categoria ?? '').trim();
 
       if (!codigo || !descripcion) continue;
 
@@ -188,6 +189,7 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
         existing.marca = marca;
         existing.precioBase = precioConPorcentaje;
         existing.existencia = existencia;
+        if (categoriaRaw) existing.categoria = categoriaRaw;
         existing.descuentoPorcentaje = descuentoPorcentaje;
         existing.precioConPorcentaje = descuentoPorcentaje ? precioConDescuento : precioConPorcentaje;
         await existing.save();
@@ -198,6 +200,7 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
           codigo,
           descripcion,
           marca,
+          categoria: categoriaRaw || undefined,
           precioBase: precioConPorcentaje,
           descuentoPorcentaje,
           precioConPorcentaje: descuentoPorcentaje ? precioConDescuento : precioConPorcentaje,
@@ -240,6 +243,7 @@ function mapProductoToDTO(p) {
     principioActivo: p.principioActivo,
     presentacion: p.presentacion,
     marca: p.marca,
+    categoria: p.categoria,
     precio: precioBase,
     descuentoPorcentaje: descuento,
     precioConPorcentaje,
