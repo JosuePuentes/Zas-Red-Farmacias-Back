@@ -100,8 +100,11 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 | GET | `/api/farmacia/pedidos` | — | `{ pedidos, totalPendientes }` |
 | POST | `/api/farmacia/pedidos/:id/validar` | — | Aprueba pedido |
 | POST | `/api/farmacia/pedidos/:id/denegar` | — | Rechaza pedido |
-| POST | `/api/farmacia/inventario/upload` | FormData `archivo` (Excel) | Columnas: codigo, descripcion, marca, precio, existencia |
+| POST | `/api/farmacia/inventario/upload` | FormData `archivo` (Excel) | Ver abajo: match por código de barras, respuesta con conflictos |
+| POST | `/api/farmacia/inventario/resolver-descripciones` | `{ decisiones: [ { codigo, usar: 'catalogo' \| 'farmacia' } ] }` | Tras subir Excel, si hubo conflictos, enviar elección del usuario |
 | GET | `/api/farmacia/productos` | — | Productos de la farmacia |
+
+**Inventario upload (Excel):** Columnas: codigo (código de barras), descripcion, marca, precio, existencia. El backend hace match con el catálogo maestro por código de barras; vincula automáticamente imagen y descripción del sistema. **Respuesta:** `{ message, creados, actualizados, vinculadosCatalogo, conflictosDescripcion }`. Si `conflictosDescripcion` tiene elementos, cada uno es `{ codigo, descripcionSistema, descripcionArchivo }`: el frontend debe mostrar un modal o lista preguntando "¿Usar descripción del sistema o la de tu archivo?" y luego llamar a `POST /api/farmacia/inventario/resolver-descripciones` con `{ decisiones: [ { codigo, usar: 'catalogo' } ] }` o `usar: 'farmacia'` según lo que eligió el usuario por cada producto.
 
 ### Cliente (token cliente)
 | Método | Ruta | Query / Body | Notas |
@@ -176,7 +179,7 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 5. **Catálogo:** Usar `GET /api/cliente/catalogo` o `/api/cliente/productos`; si el array viene vacío, mostrar estado vacío. No mostrar nunca el nombre de la farmacia al cliente; solo identificar por colores o códigos si el backend lo envía.
 6. **Carrito:** Agregar con `POST /api/cliente/carrito` body `{ productoId, cantidad }`. Si el backend responde 400 "Producto no disponible o sin stock", mostrar mensaje y no agregar.
 7. **Checkout:** FormData con `metodoPago` y archivo `comprobante`. Tras éxito, vaciar estado de carrito en el frontend.
-8. **Inventario farmacia:** Excel con columnas: codigo, descripcion, marca, precio, existencia (nombres en español; el backend acepta también mayúsculas). Subir con FormData campo `archivo`.
+8. **Inventario farmacia:** Excel con codigo (código de barras), descripcion, marca, precio, existencia. El backend hace match con el catálogo maestro y vincula imagen y descripción. Si la respuesta trae `conflictosDescripcion`, mostrar diálogo "¿Usar descripción del sistema o la de tu archivo?" por cada conflicto y luego llamar a `POST /api/farmacia/inventario/resolver-descripciones` con las decisiones del usuario.
 9. **No inventar endpoints ni campos:** Usar solo las rutas y los cuerpos/respuestas descritos en este documento. Si falta algo, consultar este archivo o al responsable del backend.
 
 Con esto el frontend permanece sincronizado con el backend.

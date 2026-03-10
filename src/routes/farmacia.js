@@ -229,7 +229,15 @@ router.post('/pedidos/:id/denegar', async (req, res) => {
   }
 });
 
-// Cargar inventario por Excel: codigo, descripcion, marca, precio, existencia
+// Colección catalogo_maestro (base Zas): ean_13, description, brand, image_path — para vincular códigos de barras a nombres e imágenes
+function getCatalogoMaestroCollection() {
+  return mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas').collection('catalogo_maestro');
+}
+
+// Cargar inventario por Excel: codigo (código de barras), descripcion, marca, precio, existencia.
+// Hace match con catalogo_maestro por ean_13; vincula imagen y descripción del sistema. Si la descripción del Excel
+// difiere de la del catálogo, se devuelve en conflictosDescripcion para que el frontend pregunte al usuario si quiere
+// quedarse con la descripción del sistema o con la suya.
 router.post('/inventario/upload', upload.single('archivo'), async (req, res) => {
   try {
     const farmaciaId = getFarmaciaId(req);
@@ -243,18 +251,55 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
     const farmacia = await Farmacia.findById(farmaciaId);
     const porcentaje = (farmacia?.porcentajePrecio || 0) / 100;
 
+    const catalogoMaestro = getCatalogoMaestroCollection();
+
     let creados = 0;
     let actualizados = 0;
+    let vinculadosCatalogo = 0;
+    const conflictosDescripcion = [];
 
     for (const row of rows) {
-      const codigo = String(row.codigo ?? row.Codigo ?? '').trim();
-      const descripcion = String(row.descripcion ?? row.Descripcion ?? '').trim();
-      const marca = String(row.marca ?? row.Marca ?? '').trim();
+      const codigo = String(row.codigo ?? row.Codigo ?? row.ean_13 ?? row.barcode ?? '').trim();
+      const descripcionExcel = String(row.descripcion ?? row.Descripcion ?? '').trim();
       const precio = Number(row.precio ?? row.Precio ?? 0);
       const existencia = Number(row.existencia ?? row.Existencia ?? 0);
       const categoriaRaw = String(row.categoria ?? row.Categoria ?? '').trim();
 
-      if (!codigo || !descripcion) continue;
+      if (!codigo) continue;
+
+      let descripcion = '';
+      let marca = '';
+      let foto = null;
+      let descripcionCatalogo = null;
+      let descripcionPersonalizada = null;
+      let usarDescripcionCatalogo = true;
+
+      const cat = await catalogoMaestro.findOne({ ean_13: codigo });
+      if (cat) {
+        const descSistema = (cat.description || cat.descripcion || '').trim();
+        descripcionCatalogo = descSistema;
+        descripcionPersonalizada = descripcionExcel || descSistema;
+        descripcion = descSistema;
+        marca = (cat.brand || cat.marca || '').trim();
+        foto = cat.image_path || cat.foto || null;
+        usarDescripcionCatalogo = true;
+        vinculadosCatalogo++;
+
+        if (descripcionExcel && descripcionExcel !== descSistema) {
+          conflictosDescripcion.push({
+            codigo,
+            descripcionSistema: descSistema,
+            descripcionArchivo: descripcionExcel,
+          });
+        }
+      } else {
+        descripcion = descripcionExcel;
+        marca = String(row.marca ?? row.Marca ?? '').trim();
+        descripcionPersonalizada = descripcionExcel;
+        usarDescripcionCatalogo = false;
+      }
+
+      if (!descripcion) continue;
 
       const descuentoRaw = row.descuentoPorcentaje ?? row.DescuentoPorcentaje ?? row.descuento ?? row.Descuento;
       const descuentoPorcentaje = clampPercentage(descuentoRaw);
@@ -267,12 +312,14 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
       const existing = await Producto.findOne({ farmaciaId, codigo });
       if (existing) {
         existing.descripcion = descripcion;
+        existing.descripcionCatalogo = descripcionCatalogo;
+        existing.descripcionPersonalizada = descripcionPersonalizada;
+        existing.usarDescripcionCatalogo = usarDescripcionCatalogo;
         existing.marca = marca;
+        existing.foto = foto;
         existing.precioBase = precioConPorcentaje;
         existing.existencia = existencia;
-        if (categoria) {
-          existing.categoria = categoria;
-        }
+        if (categoria) existing.categoria = categoria;
         existing.descuentoPorcentaje = descuentoPorcentaje;
         existing.precioConPorcentaje = descuentoPorcentaje ? precioConDescuento : precioConPorcentaje;
         await existing.save();
@@ -282,7 +329,11 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
           farmaciaId,
           codigo,
           descripcion,
+          descripcionCatalogo,
+          descripcionPersonalizada,
+          usarDescripcionCatalogo,
           marca,
+          foto,
           categoria,
           precioBase: precioConPorcentaje,
           descuentoPorcentaje,
@@ -293,12 +344,56 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
       }
     }
 
-    res.json({ message: 'Inventario cargado', creados, actualizados });
+    res.json({
+      message: 'Inventario cargado',
+      creados,
+      actualizados,
+      vinculadosCatalogo,
+      conflictosDescripcion,
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al procesar Excel' });
   }
 });
+
+// Resolver descripciones: el usuario elige por producto si usar la descripción del sistema o la del archivo.
+// Body: { decisiones: [ { codigo, usar: 'catalogo' | 'farmacia' } ] }
+router.post('/inventario/resolver-descripciones',
+  body('decisiones').isArray(),
+  body('decisiones.*.codigo').notEmpty().trim(),
+  body('decisiones.*.usar').isIn(['catalogo', 'farmacia']),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
+
+      const farmaciaId = getFarmaciaId(req);
+      if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+
+      let actualizados = 0;
+      for (const d of req.body.decisiones) {
+        const codigo = String(d.codigo).trim();
+        const usarCatalogo = d.usar === 'catalogo';
+
+        const prod = await Producto.findOne({ farmaciaId, codigo });
+        if (!prod) continue;
+
+        prod.usarDescripcionCatalogo = usarCatalogo;
+        prod.descripcion = usarCatalogo
+          ? (prod.descripcionCatalogo || prod.descripcion)
+          : (prod.descripcionPersonalizada || prod.descripcion);
+        await prod.save();
+        actualizados++;
+      }
+
+      res.json({ message: 'Descripciones actualizadas', actualizados });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al resolver descripciones' });
+    }
+  }
+);
 
 // Listar productos de la farmacia (opcional, para ver inventario)
 router.get('/productos', async (req, res) => {

@@ -23,6 +23,9 @@ const productoSchema = new mongoose.Schema({
   farmaciaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Farmacia', required: true },
   codigo: { type: String, required: true },
   descripcion: { type: String, required: true },
+  descripcionCatalogo: { type: String },      // descripción del sistema (catalogo_maestro) cuando hay match
+  descripcionPersonalizada: { type: String },  // descripción que trajo el Excel de la farmacia
+  usarDescripcionCatalogo: { type: Boolean, default: true }, // true = mostrar descripcionCatalogo; false = descripcionPersonalizada
   principioActivo: String,
   presentacion: String,
   marca: String,
