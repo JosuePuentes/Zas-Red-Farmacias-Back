@@ -250,41 +250,39 @@ router.post('/proveedores/lista-precio', requirePlanFull, upload.single('archivo
   }
 });
 
-// Lista comparativa: todos los productos de todos los proveedores de la farmacia, agrupados por codigo, mejor precio primero. Detalle "ver más" = otros proveedores con precio y existencia.
+// Lista comparativa: codigo, descripcion, marca, ofertas[] (proveedorId, proveedorNombre, precio, existencia). Sin existencia global ni solicitudes. Orden: mejor precio primero.
 router.get('/proveedores/lista-comparativa', requirePlanFull, async (req, res) => {
   try {
     const farmaciaId = getFarmaciaId(req);
     const precios = await PrecioProveedor.find({ farmaciaId })
-      .populate('proveedorId', 'nombreProveedor rif');
+      .populate('proveedorId', 'nombreProveedor');
     const byCodigo = new Map();
     for (const p of precios) {
       const cod = p.codigo;
       if (!byCodigo.has(cod)) {
         byCodigo.set(cod, {
           codigo: cod,
-          descripcion: p.descripcion,
-          marca: p.marca,
-          mejorPrecio: p.precio,
-          proveedorMejorPrecio: p.proveedorId?.nombreProveedor,
+          descripcion: p.descripcion || '',
+          marca: p.marca || '',
           ofertas: [],
         });
       }
-      const item = byCodigo.get(cod);
-      item.ofertas.push({
-        proveedorId: p.proveedorId?._id,
-        nombreProveedor: p.proveedorId?.nombreProveedor,
-        rif: p.proveedorId?.rif,
+      byCodigo.get(cod).ofertas.push({
+        proveedorId: p.proveedorId?._id?.toString?.() || p.proveedorId?.toString?.(),
+        proveedorNombre: p.proveedorId?.nombreProveedor || '',
         precio: p.precio,
-        existencia: p.existencia,
+        existencia: p.existencia ?? 0,
       });
     }
     const lista = Array.from(byCodigo.values());
     for (const item of lista) {
       item.ofertas.sort((a, b) => a.precio - b.precio);
-      if (item.ofertas.length) item.mejorPrecio = item.ofertas[0].precio;
-      if (item.ofertas[0]) item.proveedorMejorPrecio = item.ofertas[0].nombreProveedor;
     }
-    lista.sort((a, b) => a.mejorPrecio - b.mejorPrecio);
+    lista.sort((a, b) => {
+      const pA = a.ofertas[0]?.precio ?? Infinity;
+      const pB = b.ofertas[0]?.precio ?? Infinity;
+      return pA - pB;
+    });
     res.json(lista);
   } catch (e) {
     console.error(e);
@@ -292,39 +290,61 @@ router.get('/proveedores/lista-comparativa', requirePlanFull, async (req, res) =
   }
 });
 
-// Dashboard: total productos vendidos, total $ vendidos, total clientes
+// Dashboard farmacia: totalUsuariosApp, totalClientesFarmacia, ventasMesActual, ventasMesAnterior, totalPedidosMes, inventarioVariacionPct, usuariosCrecimientoPct, clientesCrecimientoPct. Todos opcionales.
 router.get('/dashboard', async (req, res) => {
   try {
     const farmaciaId = getFarmaciaId(req);
     if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
 
-    const pedidosEntregados = await Pedido.find({
-      farmaciaId,
-      estado: 'entregado',
-    });
+    const now = new Date();
+    const inicioMesActual = new Date(now.getFullYear(), now.getMonth(), 1);
+    const inicioMesAnterior = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const hace30Dias = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    let totalVendido = 0;
-    let totalProductosVendidos = 0;
-    const clientesIds = new Set();
+    const [
+      totalUsuariosApp,
+      usuariosHace30Dias,
+      pedidosEntregadosMesActual,
+      pedidosEntregadosMesAnterior,
+      totalPedidosMes,
+      clientesMesActualIds,
+      clientesMesAnteriorIds,
+      clientesFarmaciaIds,
+    ] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ createdAt: { $lt: hace30Dias } }),
+      Pedido.find({ farmaciaId, estado: 'entregado', createdAt: { $gte: inicioMesActual } }).select('total'),
+      Pedido.find({ farmaciaId, estado: 'entregado', createdAt: { $gte: inicioMesAnterior, $lt: inicioMesActual } }).select('total'),
+      Pedido.countDocuments({ farmaciaId, createdAt: { $gte: inicioMesActual } }),
+      Pedido.distinct('clienteId', { farmaciaId, estado: 'entregado', createdAt: { $gte: inicioMesActual } }),
+      Pedido.distinct('clienteId', { farmaciaId, estado: 'entregado', createdAt: { $gte: inicioMesAnterior, $lt: inicioMesActual } }),
+      Pedido.distinct('clienteId', { farmaciaId, estado: 'entregado' }),
+    ]);
 
-    for (const p of pedidosEntregados) {
-      totalVendido += p.total;
-      clientesIds.add(p.clienteId.toString());
-      for (const it of p.items) {
-        totalProductosVendidos += it.cantidad;
-      }
-    }
+    let ventasMesActual = 0;
+    for (const p of pedidosEntregadosMesActual) ventasMesActual += p.total || 0;
+    let ventasMesAnterior = 0;
+    for (const p of pedidosEntregadosMesAnterior) ventasMesAnterior += p.total || 0;
 
-    const pedidosPendientes = await Pedido.countDocuments({
-      farmaciaId,
-      estado: 'pendiente_validacion',
-    });
+    const totalClientesFarmacia = clientesFarmaciaIds.length;
+    const clientesMesActual = clientesMesActualIds.length;
+    const clientesMesAnterior = clientesMesAnteriorIds.length;
+    const usuariosCrecimientoPct = usuariosHace30Dias > 0
+      ? Math.round(((totalUsuariosApp - usuariosHace30Dias) / usuariosHace30Dias) * 10000) / 100
+      : 0;
+    const clientesCrecimientoPct = clientesMesAnterior > 0
+      ? Math.round(((clientesMesActual - clientesMesAnterior) / clientesMesAnterior) * 10000) / 100
+      : (clientesMesActual > 0 ? 100 : 0);
 
     res.json({
-      totalVendido: Math.round(totalVendido * 100) / 100,
-      totalProductosVendidos,
-      totalClientes: clientesIds.size,
-      pedidosPendientes,
+      totalUsuariosApp: totalUsuariosApp ?? 0,
+      totalClientesFarmacia: totalClientesFarmacia ?? 0,
+      ventasMesActual: Math.round((ventasMesActual ?? 0) * 100) / 100,
+      ventasMesAnterior: Math.round((ventasMesAnterior ?? 0) * 100) / 100,
+      totalPedidosMes: totalPedidosMes ?? 0,
+      inventarioVariacionPct: 0,
+      usuariosCrecimientoPct: usuariosCrecimientoPct ?? 0,
+      clientesCrecimientoPct: clientesCrecimientoPct ?? 0,
     });
   } catch (e) {
     console.error(e);

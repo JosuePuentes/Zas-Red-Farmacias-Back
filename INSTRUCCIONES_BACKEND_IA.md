@@ -53,7 +53,43 @@ Sigue el archivo INSTRUCCIONES_BACKEND_IA.md (está en el repo del backend; copi
 
 ---
 
-## 6. Reglas para la IA del backend
+## 6. Dashboard farmacia
+
+- **GET /api/farmacia/dashboard** — Auth: Bearer (farmacia identificada por token). Todas las farmacias pueden verlo (no depende de Plan Pro).
+- Respuesta (todos los campos opcionales; si falla o no existe, el frontend muestra "—"):
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| totalUsuariosApp | number | Total de usuarios de la app (solo número, sin datos personales) |
+| totalClientesFarmacia | number | Clientes de esa farmacia (distintos que han comprado) |
+| ventasMesActual | number | Monto vendido en el mes actual |
+| ventasMesAnterior | number | Monto vendido en el mes anterior |
+| totalPedidosMes | number | Número de pedidos del mes actual |
+| inventarioVariacionPct | number | Variación % del inventario (positivo = crecimiento, negativo = decadencia) |
+| usuariosCrecimientoPct | number | Crecimiento % de usuarios de la app (vs período anterior) |
+| clientesCrecimientoPct | number | Crecimiento % de clientes de la farmacia |
+
+---
+
+## 7. Inventario: existencia global y solicitudes
+
+- **Dónde:** Solo en **GET /api/farmacia/inventario**, no en la lista comparativa de proveedores.
+- **Cuándo:** Cuando la farmacia tiene Plan Pro activo (o es usuario master), cada ítem puede llevar:
+  - **existenciaGlobal:** suma de existencia por ese código en todas las farmacias.
+  - **productosSolicitados:** cantidad de solicitudes de clientes para ese código.
+- El frontend muestra la "hoja" completa de inventario (con esas columnas) solo si la farmacia tiene Plan Pro.
+
+---
+
+## 8. Lista comparativa de proveedores
+
+- **GET /api/farmacia/proveedores/lista-comparativa** no debe incluir existencia global ni solicitudes.
+- Cada ítem: `codigo`, `descripcion`, `marca`, `ofertas[]`. Nada más.
+- Cada elemento de `ofertas`: `proveedorId`, `proveedorNombre`, `precio`, `existencia`.
+
+---
+
+## 9. Reglas para la IA del backend
 
 1. No eliminar ni cambiar rutas o campos que el frontend ya use según `INSTRUCCIONES_FRONTEND_IA.md`.
 2. Añadir solo endpoints y campos documentados; mantener compatibilidad con la respuesta esperada por el frontend.
