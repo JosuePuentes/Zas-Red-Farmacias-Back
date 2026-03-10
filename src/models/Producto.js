@@ -37,6 +37,15 @@ const productoSchema = new mongoose.Schema({
   foto: String,
 }, { timestamps: true });
 
+productoSchema.virtual('descripcionVisible').get(function () {
+  if (this.usarDescripcionCatalogo && this.descripcionCatalogo) return this.descripcionCatalogo;
+  if (this.descripcionPersonalizada) return this.descripcionPersonalizada;
+  return this.descripcion;
+});
+
+productoSchema.set('toJSON', { virtuals: true });
+productoSchema.set('toObject', { virtuals: true });
+
 // Índice para búsqueda por farmacia y filtros
 productoSchema.index({ farmaciaId: 1, codigo: 1 }, { unique: true });
 productoSchema.index({ farmaciaId: 1, descripcion: 'text', marca: 'text' });

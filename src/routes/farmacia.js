@@ -407,6 +407,11 @@ router.get('/productos', async (req, res) => {
   }
 });
 
+function getDescripcionEfectiva(p) {
+  if (p.usarDescripcionCatalogo && p.descripcionCatalogo) return p.descripcionCatalogo;
+  return p.descripcionPersonalizada || p.descripcion;
+}
+
 function mapProductoToDTO(p) {
   const descuento = typeof p.descuentoPorcentaje === 'number' ? clampPercentage(p.descuentoPorcentaje) : 0;
   const precioBase = Number(p.precioBase) || 0;
@@ -417,7 +422,10 @@ function mapProductoToDTO(p) {
   return {
     id: p._id,
     codigo: p.codigo,
-    descripcion: p.descripcion,
+    descripcion: getDescripcionEfectiva(p),
+    descripcionCatalogo: p.descripcionCatalogo,
+    descripcionPersonalizada: p.descripcionPersonalizada,
+    usarDescripcionCatalogo: !!p.usarDescripcionCatalogo,
     principioActivo: p.principioActivo,
     presentacion: p.presentacion,
     marca: p.marca,
@@ -444,6 +452,36 @@ router.get('/inventario', async (req, res) => {
     res.status(500).json({ error: 'Error al obtener inventario' });
   }
 });
+
+// Resolver conflictos de descripción: body { decisiones: [ { codigo, usar: 'catalogo' | 'farmacia' } ] }
+router.post('/inventario/resolver-descripciones', async (req, res) => {
+    try {
+      const decisiones = Array.isArray(req.body.decisiones) ? req.body.decisiones : [];
+      const invalid = decisiones.some(d => !d?.codigo || !['catalogo', 'farmacia'].includes(d.usar));
+      if (invalid) return res.status(400).json({ error: 'decisiones: array de { codigo, usar: "catalogo"|"farmacia" }' });
+
+      const farmaciaId = getFarmaciaId(req);
+      if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+
+      let resueltos = 0;
+      for (const d of decisiones) {
+        const producto = await Producto.findOne({ farmaciaId, codigo: d.codigo });
+        if (!producto) continue;
+        const usarCatalogo = d.usar === 'catalogo';
+        producto.usarDescripcionCatalogo = usarCatalogo;
+        producto.descripcion = usarCatalogo && producto.descripcionCatalogo
+          ? producto.descripcionCatalogo
+          : (producto.descripcionPersonalizada || producto.descripcion);
+        await producto.save();
+        resueltos++;
+      }
+      res.json({ ok: true, resueltos });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al resolver descripciones' });
+    }
+  }
+);
 
 // Actualizar descuentos de productos (masivo e individual)
 router.patch('/inventario/descuentos', async (req, res) => {

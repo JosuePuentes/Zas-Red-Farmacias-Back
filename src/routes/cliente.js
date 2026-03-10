@@ -100,22 +100,17 @@ router.get('/productos', async (req, res) => {
   }
 });
 
-// Catálogo para nuevo frontend: mismos productos con información de descuentos. Query: estado, farmaciaId, q, page, page_size, lat, lng (lat/lng reservados para futuro orden por cercanía).
+// Catálogo: ofertas por producto/comercio (varias filas por mismo producto). q, page, page_size, opcional lat, lng.
 router.get('/catalogo', async (req, res) => {
   try {
-    const { estado, farmaciaId, q, page = 0, page_size = 20 } = req.query;
+    const { estado, farmaciaId, q, page = 1, page_size = 20, lat, lng } = req.query;
     const filter = { existencia: { $gt: 0 } };
 
-    if (farmaciaId) {
-      filter.farmaciaId = farmaciaId;
-    }
-
+    if (farmaciaId) filter.farmaciaId = farmaciaId;
     if (estado && ESTADOS_VENEZUELA.includes(estado)) {
       const farmacias = await Farmacia.find({ estado }).select('_id');
-      const ids = farmacias.map((f) => f._id);
-      filter.farmaciaId = { $in: ids };
+      filter.farmaciaId = { $in: farmacias.map((f) => f._id) };
     }
-
     if (q && String(q).trim()) {
       const search = new RegExp(String(q).trim(), 'i');
       filter.$or = [
@@ -126,27 +121,43 @@ router.get('/catalogo', async (req, res) => {
       ];
     }
 
-    const skip = Math.max(0, parseInt(page, 10) || 0) * Math.max(1, Math.min(100, parseInt(page_size, 10) || 20));
-    const limit = Math.max(1, Math.min(100, parseInt(page_size, 10) || 20));
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(page_size, 10) || 20));
+    const skip = (pageNum - 1) * pageSize;
 
-    const [productos, total] = await Promise.all([
-      Producto.find(filter)
-        .populate('farmaciaId', 'estado _id')
-        .sort({ descripcion: 1 })
+    let productos;
+    const latNum = lat != null && lat !== '' ? parseFloat(lat) : null;
+    const lngNum = lng != null && lng !== '' ? parseFloat(lng) : null;
+
+    if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
+      const all = await Producto.find(filter).populate('farmaciaId', 'estado _id lat lng nombreFarmacia');
+      const withDist = all.map((p) => {
+        const f = p.farmaciaId;
+        const dist = f?.lat != null && f?.lng != null
+          ? Math.hypot((f.lat - latNum), (f.lng - lngNum))
+          : Infinity;
+        return { product: p, distance: dist };
+      });
+      withDist.sort((a, b) => a.distance - b.distance);
+      productos = withDist.slice(skip, skip + pageSize).map((x) => x.product);
+    } else {
+      productos = await Producto.find(filter)
+        .populate('farmaciaId', 'estado _id lat lng nombreFarmacia')
+        .sort({ precioConPorcentaje: 1, descripcion: 1 })
         .skip(skip)
-        .limit(limit)
-        .lean(),
-      Producto.countDocuments(filter),
-    ]);
+        .limit(pageSize);
+    }
 
+    const total = await Producto.countDocuments(filter);
     const respuesta = productos.map((p) => {
       const descuento = getDescuento(p);
       const precioBase = Number(p.precioBase) || 0;
       const precioCon = getPrecioConPorcentaje(p);
+      const descripcion = (p.usarDescripcionCatalogo && p.descripcionCatalogo) ? p.descripcionCatalogo : (p.descripcionPersonalizada || p.descripcion);
       return {
         id: p._id.toString(),
         codigo: p.codigo,
-        descripcion: p.descripcion,
+        descripcion,
         principioActivo: p.principioActivo,
         presentacion: p.presentacion,
         marca: p.marca,
@@ -156,15 +167,17 @@ router.get('/catalogo', async (req, res) => {
         precioConPorcentaje: precioCon,
         imagen: p.foto,
         farmaciaId: (p.farmaciaId?._id || p.farmaciaId)?.toString(),
+        nombreFarmacia: p.farmaciaId?.nombreFarmacia,
         existencia: p.existencia,
       };
     });
 
     res.json({
       items: respuesta,
-      page: Math.max(0, parseInt(page, 10) || 0),
-      page_size: limit,
+      page: pageNum,
+      page_size: pageSize,
       total,
+      total_pages: Math.ceil(total / pageSize),
     });
   } catch (e) {
     console.error(e);
@@ -292,6 +305,49 @@ router.delete('/carrito/:productoId', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al eliminar' });
+  }
+});
+
+// Costo de delivery estimado según ubicación (lat, lng) y carrito. El costo no supera el subtotal.
+router.get('/delivery/estimado', async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+    const items = await Carrito.find({ clienteId: getClienteId(req) }).populate('productoId');
+    let subtotal = 0;
+    const byFarmacia = new Map();
+    for (const it of items) {
+      const p = it.productoId;
+      if (!p) continue;
+      const precioUnitario = getPrecioConPorcentaje(p);
+      subtotal += precioUnitario * it.cantidad;
+      const fid = (p.farmaciaId?.toString?.() || p.farmaciaId)?.toString();
+      if (fid) byFarmacia.set(fid, (byFarmacia.get(fid) || 0) + precioUnitario * it.cantidad);
+    }
+
+    const costoDeliveryBase = 2;
+    const costoDeliveryExtra = (byFarmacia.size - 1) * 1.5;
+    let costo = Math.round((costoDeliveryBase + Math.max(0, costoDeliveryExtra)) * 100) / 100;
+
+    if (Number.isFinite(parseFloat(lat)) && Number.isFinite(parseFloat(lng))) {
+      const ids = Array.from(byFarmacia.keys()).filter(id => mongoose.Types.ObjectId.isValid(id)).map(id => new mongoose.Types.ObjectId(id));
+      const farmacias = ids.length ? await Farmacia.find({ _id: { $in: ids } }).select('lat lng') : [];
+      const latC = parseFloat(lat);
+      const lngC = parseFloat(lng);
+      let distTotal = 0;
+      for (const f of farmacias) {
+        if (f.lat != null && f.lng != null) {
+          distTotal += Math.hypot(f.lat - latC, f.lng - lngC);
+        }
+      }
+      const factorDist = 1 + Math.min(distTotal * 0.1, 3);
+      costo = Math.round(costo * factorDist * 100) / 100;
+    }
+
+    if (subtotal > 0 && costo > subtotal) costo = Math.round(subtotal * 100) / 100;
+    res.json({ costo });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al estimar delivery' });
   }
 });
 
