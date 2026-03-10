@@ -7,6 +7,7 @@ import Carrito from '../models/Carrito.js';
 import Pedido from '../models/Pedido.js';
 import Notificacion from '../models/Notificacion.js';
 import RecordatorioMedicamento from '../models/RecordatorioMedicamento.js';
+import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
 import User from '../models/User.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
@@ -448,6 +449,40 @@ router.delete('/recordatorios/:id', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al eliminar recordatorio' });
+  }
+});
+
+// --- Solicitar producto (cuando no hay stock): 1 vez cada 7 días por producto ---
+router.post('/solicitar-producto', async (req, res) => {
+  try {
+    const codigo = req.body.codigo != null ? String(req.body.codigo).trim() : '';
+    if (!codigo) return res.status(400).json({ error: 'codigo requerido' });
+    const clienteId = getClienteId(req);
+
+    const hayStock = await Producto.exists({ codigo, existencia: { $gt: 0 } });
+    if (hayStock) {
+      return res.status(400).json({ error: 'Este producto ya está disponible. Puedes agregarlo al carrito.' });
+    }
+
+    const hace7Dias = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const ultimaSolicitud = await SolicitudProductoCliente.findOne({
+      clienteId,
+      codigo,
+      createdAt: { $gte: hace7Dias },
+    }).sort({ createdAt: -1 });
+    if (ultimaSolicitud) {
+      const proximaFecha = new Date(ultimaSolicitud.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+      return res.status(400).json({
+        error: 'Ya solicitaste este producto recientemente. Podrás volver a solicitarlo en 7 días.',
+        proximaDisponible: proximaFecha,
+      });
+    }
+
+    await SolicitudProductoCliente.create({ clienteId, codigo });
+    res.status(201).json({ message: 'Solicitud registrada. Te avisaremos cuando esté disponible.' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al registrar solicitud' });
   }
 });
 

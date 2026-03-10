@@ -11,6 +11,10 @@ import Pedido from '../models/Pedido.js';
 import Notificacion from '../models/Notificacion.js';
 import User from '../models/User.js';
 import SolicitudPlanPro from '../models/SolicitudPlanPro.js';
+import Proveedor from '../models/Proveedor.js';
+import PrecioProveedor from '../models/PrecioProveedor.js';
+import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
+import { notificarClientesProductoDisponible } from '../util/notificarProductoDisponible.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 
@@ -44,6 +48,15 @@ function calcularPrecioConDescuento(precioBase, descuentoPorcentaje) {
   const pct = clampPercentage(descuentoPorcentaje);
   const factor = 1 - pct / 100;
   return Math.round(base * factor * 100) / 100;
+}
+
+async function requirePlanFull(req, res, next) {
+  const farmaciaId = getFarmaciaId(req);
+  if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+  if (req.role === 'master') return next();
+  const farmacia = await Farmacia.findById(farmaciaId).select('planProActivo');
+  if (!farmacia?.planProActivo) return res.status(403).json({ error: 'Requiere Plan Full activo' });
+  next();
 }
 
 // --- Plan Pro ---
@@ -111,6 +124,173 @@ router.post('/plan-pro/solicitud',
     }
   }
 );
+
+// --- Proveedores (Plan Full) ---
+router.get('/proveedores', requirePlanFull, async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    const list = await Proveedor.find({ farmaciaId }).sort({ nombreProveedor: 1 });
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar proveedores' });
+  }
+});
+
+router.post('/proveedores', requirePlanFull, async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    const { rif, nombreProveedor, telefono, nombreAsesorVentas, direccion, condicionesComercialesPct, prontoPagoPct } = req.body;
+    if (!rif || !nombreProveedor || !telefono) {
+      return res.status(400).json({ error: 'Faltan: rif, nombreProveedor, telefono' });
+    }
+    const proveedor = await Proveedor.create({
+      farmaciaId,
+      rif: String(rif).trim(),
+      nombreProveedor: String(nombreProveedor).trim(),
+      telefono: String(telefono).trim(),
+      nombreAsesorVentas: String(nombreAsesorVentas || '').trim(),
+      direccion: String(direccion || '').trim(),
+      condicionesComercialesPct: Number(condicionesComercialesPct) || 0,
+      prontoPagoPct: Number(prontoPagoPct) || 0,
+    });
+    res.status(201).json(proveedor);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al crear proveedor' });
+  }
+});
+
+router.patch('/proveedores/:id', requirePlanFull, async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    const prov = await Proveedor.findOne({ _id: req.params.id, farmaciaId });
+    if (!prov) return res.status(404).json({ error: 'Proveedor no encontrado' });
+    const { rif, nombreProveedor, telefono, nombreAsesorVentas, direccion, condicionesComercialesPct, prontoPagoPct } = req.body;
+    if (rif != null) prov.rif = String(rif).trim();
+    if (nombreProveedor != null) prov.nombreProveedor = String(nombreProveedor).trim();
+    if (telefono != null) prov.telefono = String(telefono).trim();
+    if (nombreAsesorVentas != null) prov.nombreAsesorVentas = String(nombreAsesorVentas).trim();
+    if (direccion != null) prov.direccion = String(direccion).trim();
+    if (condicionesComercialesPct != null) prov.condicionesComercialesPct = Number(condicionesComercialesPct) || 0;
+    if (prontoPagoPct != null) prov.prontoPagoPct = Number(prontoPagoPct) || 0;
+    await prov.save();
+    res.json(prov);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al actualizar proveedor' });
+  }
+});
+
+router.delete('/proveedores/:id', requirePlanFull, async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    const prov = await Proveedor.findOne({ _id: req.params.id, farmaciaId });
+    if (!prov) return res.status(404).json({ error: 'Proveedor no encontrado' });
+    await Proveedor.deleteOne({ _id: prov._id });
+    res.json({ message: 'Proveedor eliminado' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al eliminar proveedor' });
+  }
+});
+
+// Lista de precios Excel: form archivo + proveedorId. Columnas: codigo, descripcion, marca, precio, existencia.
+router.post('/proveedores/lista-precio', requirePlanFull, upload.single('archivo'), async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    const proveedorId = req.body.proveedorId || req.query.proveedorId;
+    if (!proveedorId || !mongoose.Types.ObjectId.isValid(proveedorId)) {
+      return res.status(400).json({ error: 'proveedorId requerido' });
+    }
+    const proveedor = await Proveedor.findOne({ _id: proveedorId, farmaciaId });
+    if (!proveedor) return res.status(404).json({ error: 'Proveedor no encontrado' });
+    if (!req.file) return res.status(400).json({ error: 'No se envió archivo Excel' });
+
+    const workbook = xlsx.readFile(req.file.path);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = xlsx.utils.sheet_to_json(sheet);
+    let insertados = 0;
+    let actualizados = 0;
+
+    for (const row of rows) {
+      const codigo = String(row.codigo ?? row.Codigo ?? '').trim();
+      const descripcion = String(row.descripcion ?? row.Descripcion ?? '').trim();
+      const marca = String(row.marca ?? row.Marca ?? '').trim();
+      const precio = Number(row.precio ?? row.Precio ?? 0);
+      const existencia = Number(row.existencia ?? row.Existencia ?? 0);
+      if (!codigo) continue;
+
+      const existing = await PrecioProveedor.findOne({ farmaciaId, proveedorId, codigo });
+      if (existing) {
+        existing.descripcion = descripcion;
+        existing.marca = marca;
+        existing.precio = precio;
+        existing.existencia = existencia;
+        await existing.save();
+        actualizados++;
+      } else {
+        await PrecioProveedor.create({
+          farmaciaId,
+          proveedorId,
+          codigo,
+          descripcion,
+          marca,
+          precio,
+          existencia,
+        });
+        insertados++;
+      }
+    }
+
+    res.json({ message: 'Lista de precios cargada', insertados, actualizados });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al procesar lista de precios' });
+  }
+});
+
+// Lista comparativa: todos los productos de todos los proveedores de la farmacia, agrupados por codigo, mejor precio primero. Detalle "ver más" = otros proveedores con precio y existencia.
+router.get('/proveedores/lista-comparativa', requirePlanFull, async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    const precios = await PrecioProveedor.find({ farmaciaId })
+      .populate('proveedorId', 'nombreProveedor rif');
+    const byCodigo = new Map();
+    for (const p of precios) {
+      const cod = p.codigo;
+      if (!byCodigo.has(cod)) {
+        byCodigo.set(cod, {
+          codigo: cod,
+          descripcion: p.descripcion,
+          marca: p.marca,
+          mejorPrecio: p.precio,
+          proveedorMejorPrecio: p.proveedorId?.nombreProveedor,
+          ofertas: [],
+        });
+      }
+      const item = byCodigo.get(cod);
+      item.ofertas.push({
+        proveedorId: p.proveedorId?._id,
+        nombreProveedor: p.proveedorId?.nombreProveedor,
+        rif: p.proveedorId?.rif,
+        precio: p.precio,
+        existencia: p.existencia,
+      });
+    }
+    const lista = Array.from(byCodigo.values());
+    for (const item of lista) {
+      item.ofertas.sort((a, b) => a.precio - b.precio);
+      if (item.ofertas.length) item.mejorPrecio = item.ofertas[0].precio;
+      if (item.ofertas[0]) item.proveedorMejorPrecio = item.ofertas[0].nombreProveedor;
+    }
+    lista.sort((a, b) => a.mejorPrecio - b.mejorPrecio);
+    res.json(lista);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener lista comparativa' });
+  }
+});
 
 // Dashboard: total productos vendidos, total $ vendidos, total clientes
 router.get('/dashboard', async (req, res) => {
@@ -257,6 +437,7 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
     let actualizados = 0;
     let vinculadosCatalogo = 0;
     const conflictosDescripcion = [];
+    const codigosProcesados = new Set();
 
     for (const row of rows) {
       const codigo = String(row.codigo ?? row.Codigo ?? row.ean_13 ?? row.barcode ?? '').trim();
@@ -310,6 +491,8 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
       const categoria = CATEGORIAS_PRODUCTO.includes(categoriaRaw) ? categoriaRaw : undefined;
 
       const existing = await Producto.findOne({ farmaciaId, codigo });
+      codigosProcesados.add(codigo);
+
       if (existing) {
         existing.descripcion = descripcion;
         existing.descripcionCatalogo = descripcionCatalogo;
@@ -341,6 +524,17 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
           existencia,
         });
         creados++;
+      }
+    }
+
+    for (const codigo of codigosProcesados) {
+      const hayStock = await Producto.exists({ codigo, existencia: { $gt: 0 } });
+      if (hayStock) {
+        try {
+          await notificarClientesProductoDisponible(codigo);
+        } catch (err) {
+          console.error('Notificar producto disponible:', err);
+        }
       }
     }
 
@@ -439,13 +633,36 @@ function mapProductoToDTO(p) {
   };
 }
 
-// Inventario detallado para la farmacia (incluye descuentos)
+// Inventario detallado para la farmacia. Si Plan Full: añade existenciaGlobal (suma de existencia por codigo en todas las farmacias) y productosSolicitados (cantidad de solicitudes de clientes por codigo).
 router.get('/inventario', async (req, res) => {
   try {
     const farmaciaId = getFarmaciaId(req);
     if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+    const farmacia = await Farmacia.findById(farmaciaId).select('planProActivo');
     const productos = await Producto.find({ farmaciaId }).sort({ codigo: 1 });
-    const dto = productos.map(mapProductoToDTO);
+    let dto = productos.map(mapProductoToDTO);
+
+    if (farmacia?.planProActivo) {
+      const codigos = [...new Set(productos.map((p) => p.codigo))];
+      const [globalAgg, solicitudesAgg] = await Promise.all([
+        Producto.aggregate([
+          { $match: { codigo: { $in: codigos } } },
+          { $group: { _id: '$codigo', existenciaGlobal: { $sum: '$existencia' } } },
+        ]),
+        SolicitudProductoCliente.aggregate([
+          { $match: { codigo: { $in: codigos } } },
+          { $group: { _id: '$codigo', productosSolicitados: { $sum: 1 } } },
+        ]),
+      ]);
+      const globalByCodigo = new Map(globalAgg.map((g) => [g._id, g.existenciaGlobal]));
+      const solicitudesByCodigo = new Map(solicitudesAgg.map((s) => [s._id, s.productosSolicitados]));
+      dto = dto.map((p) => ({
+        ...p,
+        existenciaGlobal: globalByCodigo.get(p.codigo) ?? 0,
+        productosSolicitados: solicitudesByCodigo.get(p.codigo) ?? 0,
+      }));
+    }
+
     res.json(dto);
   } catch (e) {
     console.error(e);

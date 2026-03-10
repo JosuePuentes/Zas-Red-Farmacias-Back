@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import Farmacia from '../models/Farmacia.js';
 import Producto, { CATEGORIAS_PRODUCTO } from '../models/Producto.js';
 import Catalogo from '../models/Catalogo.js';
+import { notificarClientesProductoDisponible } from '../util/notificarProductoDisponible.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 
@@ -64,13 +65,15 @@ router.post('/:id/inventario/cargar-excel',
       const farmacia = await Farmacia.findById(farmaciaId);
       const porcentaje = (farmacia?.porcentajePrecio || 0) / 100;
 
-      let creados = 0;
-      let actualizados = 0;
-      let vinculadosCatalogo = 0;
-      const conflictosDescripcion = [];
+    let creados = 0;
+    let actualizados = 0;
+    let vinculadosCatalogo = 0;
+    const conflictosDescripcion = [];
+    const codigosProcesados = new Set();
 
-      for (const row of rows) {
-        const codigo = String(row.codigo ?? row.Codigo ?? '').trim();
+    for (const row of rows) {
+      const codigo = String(row.codigo ?? row.Codigo ?? '').trim();
+      if (codigo) codigosProcesados.add(codigo);
         const descripcionArchivo = String(row.descripcion ?? row.Descripcion ?? '').trim();
         const marca = String(row.marca ?? row.Marca ?? '').trim();
         const precio = Number(row.precio ?? row.Precio ?? 0);
@@ -148,6 +151,17 @@ router.post('/:id/inventario/cargar-excel',
             { $set: { codigo, descripcion: descripcionArchivo } },
             { upsert: true }
           );
+        }
+      }
+
+      for (const codigo of codigosProcesados) {
+        const hayStock = await Producto.exists({ codigo, existencia: { $gt: 0 } });
+        if (hayStock) {
+          try {
+            await notificarClientesProductoDisponible(codigo);
+          } catch (err) {
+            console.error('Notificar producto disponible:', err);
+          }
         }
       }
 
