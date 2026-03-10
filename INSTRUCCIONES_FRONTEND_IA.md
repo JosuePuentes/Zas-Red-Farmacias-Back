@@ -1,25 +1,41 @@
 # Instrucciones para la IA del Frontend — Zas Red Farmacias
 
-Este documento mantiene sincronizado el frontend con el backend. Úsalo como referencia al generar o modificar el frontend.
+Este documento mantiene sincronizado el frontend con el backend. **La IA del frontend debe aplicar estas instrucciones al pie de la letra para estar sincronizada con el backend.**
+
+---
+
+## Prompt para pegar a la IA del frontend
+
+Copia y pega esto al inicio del chat con la IA del frontend cuando trabajes en este proyecto:
+
+```
+Proyecto: Zas Red Farmacias. Backend en Node (Express) desplegado en https://zas-red-farmacias-back.onrender.com.
+Debes seguir SIEMPRE el archivo INSTRUCCIONES_FRONTEND_IA.md de este repositorio (o el que me proporcione el usuario) para:
+- Base URL del API (producción: https://zas-red-farmacias-back.onrender.com/api)
+- Login único por rol (master/farmacia/cliente/delivery) y redirección
+- Formato de catálogo, carrito, checkout, inventario farmacia y BCV
+- No inventar endpoints ni campos; usar solo los documentados.
+```
 
 ---
 
 ## Base URL y autenticación
 
-- **API base:** `http://localhost:4000/api` (desarrollo). En producción usar la URL del backend.
-- **Proxy Vite (recomendado):** En `vite.config.js` configurar:
+- **API base (desarrollo):** `http://localhost:4000/api`
+- **API base (producción):** `https://zas-red-farmacias-back.onrender.com/api`
+- **Variable de entorno recomendada:** `VITE_API_URL` (ej. `https://zas-red-farmacias-back.onrender.com`). Todas las peticiones: `${VITE_API_URL}/api/...`.
+- **Proxy Vite (solo desarrollo):** En `vite.config.js`:
   ```js
   proxy: {
     '/api': { target: 'http://localhost:4000', changeOrigin: true },
     '/uploads': { target: 'http://localhost:4000', changeOrigin: true },
   }
   ```
-  Así el frontend usa `/api` y `/uploads` sin CORS.
-- **Autenticación:** Todas las rutas protegidas envían el token en el header:
+- **Autenticación:** Rutas protegidas llevan el header:
   ```http
   Authorization: Bearer <token>
   ```
-- **Token:** Se obtiene en `POST /api/auth/login` o `POST /api/auth/register/cliente`. Guardar en `localStorage` (ej. clave `token`) y enviarlo en cada petición autenticada.
+- **Token:** Obtener con `POST /api/auth/login` o `POST /api/auth/register/cliente`. Guardar en `localStorage` (clave `token`) y enviarlo en cada petición que requiera auth.
 
 ---
 
@@ -90,7 +106,8 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 ### Cliente (token cliente)
 | Método | Ruta | Query / Body | Notas |
 |--------|------|--------------|--------|
-| GET | `/api/cliente/productos` | `?estado=&q=` | Catálogo; filtro por estado Venezuela y búsqueda |
+| GET | `/api/cliente/productos` | `?estado=&q=` | Catálogo; filtro por estado y búsqueda por texto |
+| GET | `/api/cliente/catalogo` | `?estado=&farmaciaId=` | Catálogo con precios y descuentos; opcional filtrar por farmacia |
 | GET | `/api/cliente/estados` | — | Lista estados Venezuela |
 | GET | `/api/cliente/carrito` | — | Items con producto poblado |
 | POST | `/api/cliente/carrito` | `{ productoId, cantidad }` | Agregar al carrito |
@@ -100,6 +117,15 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 | POST | `/api/cliente/checkout/procesar` | FormData: `metodoPago`, `comprobante` (archivo) | Crea pedido(s), vacía carrito |
 | PATCH | `/api/cliente/ubicacion` | `{ lat, lng }` | GPS del cliente |
 | GET | `/api/cliente/mis-pedidos` | — | Pedidos del cliente |
+
+**Formato respuesta GET /api/cliente/catalogo:** Array de objetos:
+- `id` (string), `codigo`, `descripcion`, `principioActivo`, `presentacion`, `marca`, `categoria`
+- `precio` (number), `descuentoPorcentaje` (number), `precioConPorcentaje` (number)
+- `imagen` (string, ruta o URL; puede ser null)
+- `farmaciaId` (string, ID; no mostrar nombre de farmacia al cliente)
+- `existencia` (number). Si es 0, no permitir agregar al carrito; mostrar "Sin stock".
+
+**Formato respuesta GET /api/cliente/productos:** Array de objetos con `_id`, `codigo`, `descripcion`, `marca`, `categoria`, `precio`, `existencia`, `foto`, `farmaciaId`, `estadoFarmacia`. Misma regla: no mostrar nombre de farmacia; si `existencia === 0`, mostrar "Sin stock" y deshabilitar agregar al carrito.
 
 ### Delivery (token delivery)
 | Método | Ruta | Body | Notas |
@@ -131,13 +157,26 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 
 ---
 
-## Resumen para la IA del frontend
+## Catálogo (portal cliente)
 
-1. Usar **un solo login**; redirigir por `user.role` a `/admin`, `/farmacia`, `/cliente` o `/delivery`.
-2. Obtener **BCV** con `GET /api/config` al cargar la app; mostrar en todos los precios **$** y debajo **Bs. (precio × BCV)**; en headers de cliente/farmacia/delivery mostrar **BCV: X.XX Bs/$** arriba a la derecha.
-3. Enviar **Authorization: Bearer &lt;token&gt;** en todas las peticiones a rutas protegidas.
-4. Para **crear farmacia** (master) enviar todos los campos indicados, incluido `estado` (lista de estados Venezuela).
-5. **Checkout cliente:** FormData con `metodoPago` y archivo `comprobante`.
-6. **Inventario farmacia:** Excel con columnas codigo, descripcion, marca, precio, existencia; el backend aplica el porcentaje de la farmacia al precio.
+- **Origen de datos:** El catálogo que ve el cliente sale de los productos que cada farmacia ha subido (inventario Excel). Si ninguna farmacia ha subido inventario, la lista estará vacía: mostrar mensaje tipo "No hay productos disponibles" y no fallar.
+- **Endpoints a usar:** `GET /api/cliente/catalogo` (recomendado para listado con precios/descuentos) o `GET /api/cliente/productos?estado=&q=` para filtro por estado y búsqueda.
+- **Búsqueda:** Enviar `q` con el texto que escribe el usuario (ej. debounce 300 ms). Backend busca en codigo, descripcion, principioActivo, marca.
+- **Imágenes:** Si `imagen` o `foto` viene con ruta relativa (ej. `/uploads/xxx`), construir URL como `${VITE_API_URL}${imagen}`. Si es null, mostrar placeholder.
+- **Sin stock:** Si `existencia <= 0`, no mostrar botón "Agregar al carrito" o mostrarlo deshabilitado con texto "Sin stock".
 
-Con esto el frontend puede mantenerse alineado con este backend.
+---
+
+## Reglas obligatorias para la IA del frontend
+
+1. **Un solo login:** Pantalla única con email y contraseña. Tras login, redirigir según `user.role`: `master` → `/admin`, `farmacia` → `/farmacia`, `cliente` → `/cliente`, `delivery` → `/delivery`. No preguntar "¿Eres cliente o farmacia?".
+2. **URL del API:** En producción usar `https://zas-red-farmacias-back.onrender.com`. Definir `VITE_API_URL` y usarla en todas las llamadas a `/api` y `/uploads`.
+3. **Token:** Guardar `token` del login en `localStorage`; enviar header `Authorization: Bearer <token>` en todas las rutas protegidas. Si el backend responde 401, redirigir a login y limpiar token.
+4. **BCV:** Al cargar la app, llamar `GET /api/config` y guardar `bcv`. En precios mostrar: línea 1 `$X.XX`, línea 2 `Bs. (X × bcv)`. En header de cliente/farmacia/delivery mostrar "BCV: X.XX Bs/$".
+5. **Catálogo:** Usar `GET /api/cliente/catalogo` o `/api/cliente/productos`; si el array viene vacío, mostrar estado vacío. No mostrar nunca el nombre de la farmacia al cliente; solo identificar por colores o códigos si el backend lo envía.
+6. **Carrito:** Agregar con `POST /api/cliente/carrito` body `{ productoId, cantidad }`. Si el backend responde 400 "Producto no disponible o sin stock", mostrar mensaje y no agregar.
+7. **Checkout:** FormData con `metodoPago` y archivo `comprobante`. Tras éxito, vaciar estado de carrito en el frontend.
+8. **Inventario farmacia:** Excel con columnas: codigo, descripcion, marca, precio, existencia (nombres en español; el backend acepta también mayúsculas). Subir con FormData campo `archivo`.
+9. **No inventar endpoints ni campos:** Usar solo las rutas y los cuerpos/respuestas descritos en este documento. Si falta algo, consultar este archivo o al responsable del backend.
+
+Con esto el frontend permanece sincronizado con el backend.
