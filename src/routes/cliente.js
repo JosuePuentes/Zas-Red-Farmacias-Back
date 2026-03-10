@@ -125,6 +125,54 @@ router.get('/catalogo', async (req, res) => {
     const pageSize = Math.min(100, Math.max(1, parseInt(page_size, 10) || 20));
     const skip = (pageNum - 1) * pageSize;
 
+    // Primero miramos si hay productos de farmacias con existencia.
+    const totalProductos = await Producto.countDocuments(filter);
+
+    // Fallback: si no hay inventario cargado en ninguna farmacia, usar el catálogo maestro global.
+    if (!totalProductos) {
+      const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
+      const coll = dbCatalogo.collection('catalogo_maestro');
+
+      const maestroFilter = {};
+      if (q && String(q).trim()) {
+        const search = new RegExp(String(q).trim(), 'i');
+        maestroFilter.$or = [
+          { ean_13: search },
+          { description: search },
+          { brand: search },
+        ];
+      }
+
+      const totalMaestro = await coll.countDocuments(maestroFilter);
+      const docs = await coll.find(maestroFilter).skip(skip).limit(pageSize).toArray();
+
+      const items = docs.map((d) => ({
+        id: String(d._id),
+        codigo: d.ean_13,
+        descripcion: d.description,
+        principioActivo: null,
+        presentacion: null,
+        marca: d.brand,
+        categoria: null,
+        precio: null,
+        descuentoPorcentaje: 0,
+        precioConPorcentaje: null,
+        // image_path suele ser "public/...", el frontend decidirá cómo resolver la ruta.
+        imagen: d.image_path || null,
+        farmaciaId: null,
+        nombreFarmacia: null,
+        existencia: 0,
+      }));
+
+      return res.json({
+        items,
+        page: pageNum,
+        page_size: pageSize,
+        total: totalMaestro,
+        total_pages: Math.ceil(totalMaestro / pageSize) || 1,
+      });
+    }
+
     let productos;
     const latNum = lat != null && lat !== '' ? parseFloat(lat) : null;
     const lngNum = lng != null && lng !== '' ? parseFloat(lng) : null;
@@ -148,7 +196,6 @@ router.get('/catalogo', async (req, res) => {
         .limit(pageSize);
     }
 
-    const total = await Producto.countDocuments(filter);
     const respuesta = productos.map((p) => {
       const descuento = getDescuento(p);
       const precioBase = Number(p.precioBase) || 0;
@@ -176,8 +223,8 @@ router.get('/catalogo', async (req, res) => {
       items: respuesta,
       page: pageNum,
       page_size: pageSize,
-      total,
-      total_pages: Math.ceil(total / pageSize),
+      total: totalProductos,
+      total_pages: Math.ceil(totalProductos / pageSize),
     });
   } catch (e) {
     console.error(e);
