@@ -9,6 +9,7 @@ import { connectDB } from './config/db.js';
 const __dirnameUp = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir = process.env.UPLOAD_DIR || path.join(__dirnameUp, '../uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const publicDir = path.join(__dirnameUp, '../public');
 import authRoutes from './routes/auth.js';
 import masterRoutes from './routes/master.js';
 import farmaciaRoutes from './routes/farmacia.js';
@@ -26,6 +27,10 @@ app.use(express.json());
 
 // Archivos subidos (comprobantes, fotos)
 app.use('/uploads', express.static(uploadDir));
+// Imágenes estáticas de catálogo maestro (generadas por farmatodo_ingesta_salud.py)
+if (fs.existsSync(publicDir)) {
+  app.use('/public', express.static(publicDir));
+}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/master', masterRoutes);
