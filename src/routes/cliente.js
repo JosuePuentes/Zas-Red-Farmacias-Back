@@ -6,6 +6,7 @@ import Farmacia from '../models/Farmacia.js';
 import Carrito from '../models/Carrito.js';
 import Pedido from '../models/Pedido.js';
 import Notificacion from '../models/Notificacion.js';
+import RecordatorioMedicamento from '../models/RecordatorioMedicamento.js';
 import User from '../models/User.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
@@ -341,6 +342,226 @@ router.get('/delivery/estimado', async (req, res) => {
 // Estados para filtro
 router.get('/estados', (req, res) => {
   res.json(ESTADOS_VENEZUELA);
+});
+
+// --- Recordatorios de medicamentos ---
+function calcularFechaFin(fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras) {
+  const dosesPerDay = 24 / Math.max(intervaloHoras, 0.25);
+  const totalDoses = cantidadInicial / Math.max(cantidadPorToma, 0.5);
+  const daysTotal = totalDoses / dosesPerDay;
+  return new Date(fechaCompra.getTime() + daysTotal * 24 * 60 * 60 * 1000);
+}
+
+// GET /api/cliente/recordatorios — lista los recordatorios del cliente; dispara notificación 2 días antes del fin si aplica.
+router.get('/recordatorios', async (req, res) => {
+  try {
+    const clienteId = getClienteId(req);
+    const list = await RecordatorioMedicamento.find({ clienteId, activo: true }).sort({ fechaEstimadaFin: 1 });
+    const ahora = new Date();
+    const dosDiasMs = 2 * 24 * 60 * 60 * 1000;
+
+    for (const rec of list) {
+      const falta = rec.fechaEstimadaFin.getTime() - ahora.getTime();
+      if (!rec.notificadoFinProximo && falta > 0 && falta <= dosDiasMs) {
+        rec.notificadoFinProximo = true;
+        await rec.save();
+        await Notificacion.create({
+          userId: clienteId,
+          tipo: 'recordatorio_quedapoco',
+          mensaje: `Te queda poco de "${rec.descripcion}". Se estima que se te acabe en 2 días o menos. Gestiona tu compra.`,
+          recordatorioId: rec._id,
+        });
+      }
+    }
+
+    const lista = await RecordatorioMedicamento.find({ clienteId, activo: true }).sort({ fechaEstimadaFin: 1 });
+    res.json(lista);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar recordatorios' });
+  }
+});
+
+// POST /api/cliente/recordatorios — agregar medicamento (desde catálogo o manual). Body: codigo, descripcion, imagen?, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia?
+router.post('/recordatorios', async (req, res) => {
+  try {
+    const { codigo, descripcion, imagen, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia } = req.body;
+    if (!codigo || !descripcion || !fechaCompra || cantidadInicial == null || cantidadPorToma == null || intervaloHoras == null) {
+      return res.status(400).json({ error: 'Faltan campos: codigo, descripcion, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras' });
+    }
+    const fecha = new Date(fechaCompra);
+    if (Number.isNaN(fecha.getTime())) return res.status(400).json({ error: 'fechaCompra inválida' });
+    const cantInicial = Number(cantidadInicial) || 1;
+    const cantToma = Number(cantidadPorToma) || 1;
+    const intervalo = Number(intervaloHoras) || 8;
+    const fechaFin = calcularFechaFin(fecha, cantInicial, cantToma, intervalo);
+
+    const rec = await RecordatorioMedicamento.create({
+      clienteId: getClienteId(req),
+      codigo: String(codigo).trim(),
+      descripcion: String(descripcion).trim(),
+      imagen: imagen != null ? String(imagen) : undefined,
+      fechaCompra: fecha,
+      cantidadInicial: cantInicial,
+      cantidadPorToma: cantToma,
+      intervaloHoras: intervalo,
+      precioReferencia: precioReferencia != null ? Number(precioReferencia) : undefined,
+      fechaEstimadaFin: fechaFin,
+      activo: true,
+    });
+    res.status(201).json(rec);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al crear recordatorio' });
+  }
+});
+
+// PATCH /api/cliente/recordatorios/:id
+router.patch('/recordatorios/:id', async (req, res) => {
+  try {
+    const rec = await RecordatorioMedicamento.findOne({ _id: req.params.id, clienteId: getClienteId(req) });
+    if (!rec) return res.status(404).json({ error: 'Recordatorio no encontrado' });
+    const { fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia, activo } = req.body;
+    if (fechaCompra != null) rec.fechaCompra = new Date(fechaCompra);
+    if (cantidadInicial != null) rec.cantidadInicial = Number(cantidadInicial) || 1;
+    if (cantidadPorToma != null) rec.cantidadPorToma = Number(cantidadPorToma) || 1;
+    if (intervaloHoras != null) rec.intervaloHoras = Number(intervaloHoras) || 8;
+    if (precioReferencia !== undefined) rec.precioReferencia = precioReferencia != null ? Number(precioReferencia) : undefined;
+    if (typeof activo === 'boolean') rec.activo = activo;
+    rec.fechaEstimadaFin = calcularFechaFin(rec.fechaCompra, rec.cantidadInicial, rec.cantidadPorToma, rec.intervaloHoras);
+    await rec.save();
+    res.json(rec);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al actualizar recordatorio' });
+  }
+});
+
+// DELETE /api/cliente/recordatorios/:id
+router.delete('/recordatorios/:id', async (req, res) => {
+  try {
+    const rec = await RecordatorioMedicamento.findOne({ _id: req.params.id, clienteId: getClienteId(req) });
+    if (!rec) return res.status(404).json({ error: 'Recordatorio no encontrado' });
+    rec.activo = false;
+    await rec.save();
+    res.json({ message: 'Recordatorio desactivado' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al eliminar recordatorio' });
+  }
+});
+
+// --- Recetas / escáner: buscar por texto y agregar al carrito en lote ---
+// GET /api/cliente/recetas/buscar?q= — busca en catálogo maestro y en Producto (con stock); devuelve ofertas para agregar al carrito.
+router.get('/recetas/buscar', async (req, res) => {
+  try {
+    const q = (req.query.q && String(req.query.q).trim()) || '';
+    if (!q) return res.json({ coincidencias: [] });
+
+    const search = new RegExp(q, 'i');
+    const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
+    const collMaestro = dbCatalogo.collection('catalogo_maestro');
+
+    const fromMaestro = await collMaestro.find({
+      $or: [
+        { ean_13: search },
+        { description: search },
+        { brand: search },
+      ],
+    }).limit(50).toArray();
+
+    const productos = await Producto.find({
+      existencia: { $gt: 0 },
+      $or: [
+        { codigo: search },
+        { descripcion: search },
+        { marca: search },
+      ],
+    }).populate('farmaciaId', 'nombreFarmacia').limit(100);
+
+    const byCodigo = new Map();
+    for (const d of fromMaestro) {
+      const cod = (d.ean_13 || '').toString();
+      if (!byCodigo.has(cod)) {
+        byCodigo.set(cod, {
+          codigo: cod,
+          descripcion: d.description || '',
+          marca: d.brand || '',
+          imagen: d.image_path || null,
+          ofertas: [],
+        });
+      }
+    }
+    for (const p of productos) {
+      const cod = (p.codigo || '').toString();
+      if (!byCodigo.has(cod)) {
+        byCodigo.set(cod, {
+          codigo: cod,
+          descripcion: p.descripcion || '',
+          marca: p.marca || '',
+          imagen: p.foto || null,
+          ofertas: [],
+        });
+      }
+      const precioCon = getPrecioConPorcentaje(p);
+      byCodigo.get(cod).ofertas.push({
+        productoId: p._id.toString(),
+        farmaciaId: (p.farmaciaId?._id || p.farmaciaId)?.toString(),
+        nombreFarmacia: p.farmaciaId?.nombreFarmacia,
+        precio: precioCon,
+        existencia: p.existencia,
+      });
+    }
+
+    const coincidencias = Array.from(byCodigo.values());
+    res.json({ coincidencias });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al buscar receta' });
+  }
+});
+
+// POST /api/cliente/recetas/agregar-al-carrito — body: { items: [ { productoId, cantidad } ] }
+router.post('/recetas/agregar-al-carrito', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    if (!items.length) return res.status(400).json({ error: 'items debe ser un array de { productoId, cantidad }' });
+    const clienteId = getClienteId(req);
+    const agregados = [];
+    const errores = [];
+
+    for (const it of items) {
+      const productoId = it.productoId;
+      const cantidad = Math.max(1, parseInt(it.cantidad, 10) || 1);
+      if (!productoId || !mongoose.Types.ObjectId.isValid(productoId)) {
+        errores.push({ productoId, error: 'productoId inválido' });
+        continue;
+      }
+      const producto = await Producto.findById(productoId);
+      if (!producto || producto.existencia < cantidad) {
+        errores.push({ productoId, error: 'Producto no disponible o sin stock suficiente' });
+        continue;
+      }
+      let item = await Carrito.findOne({ clienteId, productoId });
+      if (item) {
+        item.cantidad = Math.min(item.cantidad + cantidad, producto.existencia);
+        await item.save();
+      } else {
+        item = await Carrito.create({
+          clienteId,
+          productoId,
+          cantidad: Math.min(cantidad, producto.existencia),
+        });
+      }
+      agregados.push({ productoId, cantidad: item.cantidad });
+    }
+
+    const carrito = await Carrito.find({ clienteId }).populate('productoId');
+    res.status(201).json({ carrito, agregados, errores });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al agregar al carrito' });
+  }
 });
 
 // Carrito: agregar
