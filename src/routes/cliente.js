@@ -15,8 +15,6 @@ import { ESTADOS_VENEZUELA } from '../constants/estados.js';
 
 const router = Router();
 
-router.use(auth, requireRole('cliente'), attachUser);
-
 function getClienteId(req) {
   if (req.role === 'master' && (req.headers['x-cliente-id'] || req.query.clienteId)) {
     const id = req.headers['x-cliente-id'] || req.query.clienteId;
@@ -233,6 +231,9 @@ router.get('/catalogo', async (req, res) => {
     res.status(500).json({ error: 'Error al listar catálogo' });
   }
 });
+
+// A partir de aquí, todas las rutas requieren cliente autenticado.
+router.use(auth, requireRole('cliente'), attachUser);
 
 // Costo de delivery estimado para motos según carrito y distancia aproximada cliente–farmacia(s).
 // Usa un tabulador por km y nunca deja que el costo supere una fracción del subtotal.
