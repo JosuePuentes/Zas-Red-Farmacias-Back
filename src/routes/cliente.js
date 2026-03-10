@@ -185,12 +185,14 @@ router.get('/catalogo', async (req, res) => {
   }
 });
 
-// Costo de delivery estimado según carrito actual y opcionalmente lat/lng. El costo no supera el subtotal (evitar que delivery sea más caro que los productos).
+// Costo de delivery estimado para motos según carrito y distancia aproximada cliente–farmacia(s).
+// Usa un tabulador por km y nunca deja que el costo supere una fracción del subtotal.
 router.get('/delivery/estimado', async (req, res) => {
   try {
     const items = await Carrito.find({ clienteId: getClienteId(req) }).populate('productoId');
     let subtotal = 0;
-    const byFarmacia = new Map();
+    const byFarmacia = new Map(); // farmaciaId -> monto del carrito asociado
+
     for (const it of items) {
       const p = it.productoId;
       if (!p) continue;
@@ -200,13 +202,88 @@ router.get('/delivery/estimado', async (req, res) => {
       const fid = (p.farmaciaId && (p.farmaciaId._id || p.farmaciaId))?.toString();
       if (fid) byFarmacia.set(fid, (byFarmacia.get(fid) || 0) + monto);
     }
-    const numFarmacias = byFarmacia.size || 1;
-    const costoDeliveryBase = 2;
-    const costoDeliveryExtra = (numFarmacias - 1) * 1.5;
-    let costo = Math.round((costoDeliveryBase + Math.max(0, costoDeliveryExtra)) * 100) / 100;
-    if (subtotal > 0 && costo > subtotal) {
-      costo = Math.round(Math.min(costo, subtotal * 0.5) * 100) / 100;
+
+    if (subtotal <= 0 || byFarmacia.size === 0) {
+      return res.json({ costo: 0 });
     }
+
+    // Tabulador de referencia para delivery en moto (por pedido, según la distancia máxima a las farmacias).
+    const TARIFAS_MOTO_KM = [
+      { kmMax: 2, precio: 1.0 },
+      { kmMax: 5, precio: 1.5 },
+      { kmMax: 8, precio: 2.0 },
+      { kmMax: 12, precio: 2.5 },
+      { kmMax: 20, precio: 3.0 },
+      { kmMax: 30, precio: 3.5 },
+    ];
+    const RECARGO_FARMACIA_ADICIONAL = 0.5;
+
+    function kmEntre(lat1, lng1, lat2, lng2) {
+      const R = 6371; // km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    const numFarmacias = byFarmacia.size;
+
+    // 1) Determinar coordenadas del cliente: primero query ?lat,lng, si no usar ultimaLat/ultimaLng guardadas.
+    let latCliente = Number.isFinite(parseFloat(req.query.lat)) ? parseFloat(req.query.lat) : null;
+    let lngCliente = Number.isFinite(parseFloat(req.query.lng)) ? parseFloat(req.query.lng) : null;
+
+    if (!Number.isFinite(latCliente) || !Number.isFinite(lngCliente)) {
+      const cliente = await User.findById(getClienteId(req)).select('ultimaLat ultimaLng');
+      if (cliente?.ultimaLat != null && cliente?.ultimaLng != null) {
+        latCliente = cliente.ultimaLat;
+        lngCliente = cliente.ultimaLng;
+      }
+    }
+
+    let costo;
+
+    if (Number.isFinite(latCliente) && Number.isFinite(lngCliente)) {
+      // 2) Calcular distancia máxima a las farmacias del carrito.
+      const farmaciaIds = Array.from(byFarmacia.keys());
+      const farmacias = await Farmacia.find({ _id: { $in: farmaciaIds } }).select('lat lng');
+
+      const distancias = [];
+      for (const f of farmacias) {
+        if (typeof f.lat === 'number' && typeof f.lng === 'number') {
+          distancias.push(kmEntre(latCliente, lngCliente, f.lat, f.lng));
+        }
+      }
+
+      const distanciaRef = distancias.length ? Math.max(...distancias) : 0;
+
+      // Buscar precio en el tabulador según la distancia de referencia.
+      let precioTabla = TARIFAS_MOTO_KM[TARIFAS_MOTO_KM.length - 1].precio;
+      for (const tramo of TARIFAS_MOTO_KM) {
+        if (distanciaRef <= tramo.kmMax) {
+          precioTabla = tramo.precio;
+          break;
+        }
+      }
+
+      const recargo = Math.max(0, numFarmacias - 1) * RECARGO_FARMACIA_ADICIONAL;
+      costo = precioTabla + recargo;
+    } else {
+      // Sin coordenadas del cliente: fallback por número de farmacias (más barato que carro, pero coherente).
+      const base = 1.5;
+      const extra = Math.max(0, numFarmacias - 1) * 0.75;
+      costo = base + extra;
+    }
+
+    // Redondear a 2 decimales y asegurar que no supere una fracción del subtotal.
+    costo = Math.round(costo * 100) / 100;
+    if (subtotal > 0 && costo > subtotal) {
+      // Máximo 50% del subtotal (ajustable).
+      const limite = subtotal * 0.5;
+      costo = Math.round(Math.min(costo, limite) * 100) / 100;
+    }
+
     res.json({ costo });
   } catch (e) {
     console.error(e);
