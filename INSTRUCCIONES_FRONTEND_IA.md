@@ -110,7 +110,8 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 | Método | Ruta | Query / Body | Notas |
 |--------|------|--------------|--------|
 | GET | `/api/cliente/productos` | `?estado=&q=` | Catálogo; filtro por estado y búsqueda por texto |
-| GET | `/api/cliente/catalogo` | `?estado=&farmaciaId=` | Catálogo con precios y descuentos; opcional filtrar por farmacia |
+| GET | `/api/cliente/catalogo` | `?estado=&farmaciaId=&q=&page=0&page_size=20&lat=&lng=` | Catálogo paginado; q=búsqueda, lat/lng opcionales (futuro orden por cercanía) |
+| GET | `/api/cliente/delivery/estimado` | `?lat=&lng=` | Estima costo de delivery según carrito; respuesta `{ costo }` (no supera subtotal) |
 | GET | `/api/cliente/estados` | — | Lista estados Venezuela |
 | GET | `/api/cliente/carrito` | — | Items con producto poblado |
 | POST | `/api/cliente/carrito` | `{ productoId, cantidad }` | Agregar al carrito |
@@ -121,7 +122,7 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 | PATCH | `/api/cliente/ubicacion` | `{ lat, lng }` | GPS del cliente |
 | GET | `/api/cliente/mis-pedidos` | — | Pedidos del cliente |
 
-**Formato respuesta GET /api/cliente/catalogo:** Array de objetos:
+**Formato respuesta GET /api/cliente/catalogo:** `{ items, page, page_size, total }`. `items` es un array de objetos:
 - `id` (string), `codigo`, `descripcion`, `principioActivo`, `presentacion`, `marca`, `categoria`
 - `precio` (number), `descuentoPorcentaje` (number), `precioConPorcentaje` (number)
 - `imagen` (string, ruta o URL; puede ser null)
@@ -163,10 +164,15 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 ## Catálogo (portal cliente)
 
 - **Origen de datos:** El catálogo que ve el cliente sale de los productos que cada farmacia ha subido (inventario Excel). Si ninguna farmacia ha subido inventario, la lista estará vacía: mostrar mensaje tipo "No hay productos disponibles" y no fallar.
-- **Endpoints a usar:** `GET /api/cliente/catalogo` (recomendado para listado con precios/descuentos) o `GET /api/cliente/productos?estado=&q=` para filtro por estado y búsqueda.
+- **Endpoint:** `GET /api/cliente/catalogo?estado=&farmaciaId=&q=&page=0&page_size=20&lat=&lng=` (lat/lng opcionales, reservados para futuro). Respuesta: `{ items, page, page_size, total }`.
 - **Búsqueda:** Enviar `q` con el texto que escribe el usuario (ej. debounce 300 ms). Backend busca en codigo, descripcion, principioActivo, marca.
+- **Paginación:** Usar `page` y `page_size`; el backend devuelve `total` para el total de ítems.
 - **Imágenes:** Si `imagen` o `foto` viene con ruta relativa (ej. `/uploads/xxx`), construir URL como `${VITE_API_URL}${imagen}`. Si es null, mostrar placeholder.
 - **Sin stock:** Si `existencia <= 0`, no mostrar botón "Agregar al carrito" o mostrarlo deshabilitado con texto "Sin stock".
+
+## Delivery estimado
+
+- **GET /api/cliente/delivery/estimado?lat=&lng=** (token cliente). Devuelve `{ costo }` (número) según el carrito actual. El backend evita que el costo de delivery supere el subtotal de productos. Usar en checkout o resumen para mostrar "Costo de envío estimado: $X.XX".
 
 ---
 
@@ -176,7 +182,7 @@ Body crear farmacia: `{ email, password, nombreFarmacia, rif, gerenteEncargado, 
 2. **URL del API:** En producción usar `https://zas-red-farmacias-back.onrender.com`. Definir `VITE_API_URL` y usarla en todas las llamadas a `/api` y `/uploads`.
 3. **Token:** Guardar `token` del login en `localStorage`; enviar header `Authorization: Bearer <token>` en todas las rutas protegidas. Si el backend responde 401, redirigir a login y limpiar token.
 4. **BCV:** Al cargar la app, llamar `GET /api/config` y guardar `bcv`. En precios mostrar: línea 1 `$X.XX`, línea 2 `Bs. (X × bcv)`. En header de cliente/farmacia/delivery mostrar "BCV: X.XX Bs/$".
-5. **Catálogo:** Usar `GET /api/cliente/catalogo` o `/api/cliente/productos`; si el array viene vacío, mostrar estado vacío. No mostrar nunca el nombre de la farmacia al cliente; solo identificar por colores o códigos si el backend lo envía.
+5. **Catálogo:** Usar `GET /api/cliente/catalogo?q=&page=0&page_size=20`; la respuesta es `{ items, page, page_size, total }` — usar `items` para la lista. Si `items` viene vacío, mostrar estado vacío. No mostrar nunca el nombre de la farmacia al cliente. Para costo de envío estimado usar `GET /api/cliente/delivery/estimado?lat=&lng=` → `{ costo }`.
 6. **Carrito:** Agregar con `POST /api/cliente/carrito` body `{ productoId, cantidad }`. Si el backend responde 400 "Producto no disponible o sin stock", mostrar mensaje y no agregar.
 7. **Checkout:** FormData con `metodoPago` y archivo `comprobante`. Tras éxito, vaciar estado de carrito en el frontend.
 8. **Inventario farmacia:** Excel con codigo (código de barras), descripcion, marca, precio, existencia. El backend hace match con el catálogo maestro y vincula imagen y descripción. Si la respuesta trae `conflictosDescripcion`, mostrar diálogo "¿Usar descripción del sistema o la de tu archivo?" por cada conflicto y luego llamar a `POST /api/farmacia/inventario/resolver-descripciones` con las decisiones del usuario.

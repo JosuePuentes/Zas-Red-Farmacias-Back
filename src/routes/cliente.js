@@ -100,10 +100,10 @@ router.get('/productos', async (req, res) => {
   }
 });
 
-// Catálogo para nuevo frontend: mismos productos con información de descuentos
+// Catálogo para nuevo frontend: mismos productos con información de descuentos. Query: estado, farmaciaId, q, page, page_size, lat, lng (lat/lng reservados para futuro orden por cercanía).
 router.get('/catalogo', async (req, res) => {
   try {
-    const { estado, farmaciaId } = req.query;
+    const { estado, farmaciaId, q, page = 0, page_size = 20 } = req.query;
     const filter = { existencia: { $gt: 0 } };
 
     if (farmaciaId) {
@@ -116,9 +116,28 @@ router.get('/catalogo', async (req, res) => {
       filter.farmaciaId = { $in: ids };
     }
 
-    const productos = await Producto.find(filter)
-      .populate('farmaciaId', 'estado _id')
-      .sort({ descripcion: 1 });
+    if (q && String(q).trim()) {
+      const search = new RegExp(String(q).trim(), 'i');
+      filter.$or = [
+        { codigo: search },
+        { descripcion: search },
+        { principioActivo: search },
+        { marca: search },
+      ];
+    }
+
+    const skip = Math.max(0, parseInt(page, 10) || 0) * Math.max(1, Math.min(100, parseInt(page_size, 10) || 20));
+    const limit = Math.max(1, Math.min(100, parseInt(page_size, 10) || 20));
+
+    const [productos, total] = await Promise.all([
+      Producto.find(filter)
+        .populate('farmaciaId', 'estado _id')
+        .sort({ descripcion: 1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Producto.countDocuments(filter),
+    ]);
 
     const respuesta = productos.map((p) => {
       const descuento = getDescuento(p);
@@ -141,10 +160,44 @@ router.get('/catalogo', async (req, res) => {
       };
     });
 
-    res.json(respuesta);
+    res.json({
+      items: respuesta,
+      page: Math.max(0, parseInt(page, 10) || 0),
+      page_size: limit,
+      total,
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar catálogo' });
+  }
+});
+
+// Costo de delivery estimado según carrito actual y opcionalmente lat/lng. El costo no supera el subtotal (evitar que delivery sea más caro que los productos).
+router.get('/delivery/estimado', async (req, res) => {
+  try {
+    const items = await Carrito.find({ clienteId: getClienteId(req) }).populate('productoId');
+    let subtotal = 0;
+    const byFarmacia = new Map();
+    for (const it of items) {
+      const p = it.productoId;
+      if (!p) continue;
+      const precioUnitario = getPrecioConPorcentaje(p);
+      const monto = precioUnitario * it.cantidad;
+      subtotal += monto;
+      const fid = (p.farmaciaId && (p.farmaciaId._id || p.farmaciaId))?.toString();
+      if (fid) byFarmacia.set(fid, (byFarmacia.get(fid) || 0) + monto);
+    }
+    const numFarmacias = byFarmacia.size || 1;
+    const costoDeliveryBase = 2;
+    const costoDeliveryExtra = (numFarmacias - 1) * 1.5;
+    let costo = Math.round((costoDeliveryBase + Math.max(0, costoDeliveryExtra)) * 100) / 100;
+    if (subtotal > 0 && costo > subtotal) {
+      costo = Math.round(Math.min(costo, subtotal * 0.5) * 100) / 100;
+    }
+    res.json({ costo });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al estimar delivery' });
   }
 });
 
