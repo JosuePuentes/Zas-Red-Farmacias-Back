@@ -5,6 +5,7 @@ import Farmacia from '../models/Farmacia.js';
 import SolicitudDelivery from '../models/SolicitudDelivery.js';
 import SolicitudFarmacia from '../models/SolicitudFarmacia.js';
 import SolicitudPlanPro from '../models/SolicitudPlanPro.js';
+import DeliveryStats from '../models/DeliveryStats.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
 
@@ -255,6 +256,98 @@ router.post('/solicitudes-delivery/:id/aprobar', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al aprobar' });
+  }
+});
+
+// Resumen de finanzas: comisiones por ventas (3%) y delivery (20%)
+router.get('/finanzas/resumen', async (req, res) => {
+  try {
+    const Pedido = (await import('../models/Pedido.js')).default;
+
+    // Ventas por farmacia (solo pedidos entregados)
+    const ventasAgg = await Pedido.aggregate([
+      { $match: { estado: 'entregado' } },
+      {
+        $group: {
+          _id: '$farmaciaId',
+          totalVentas: { $sum: '$subtotal' },
+        },
+      },
+    ]);
+
+    const farmaciaIds = ventasAgg.map((v) => v._id).filter(Boolean);
+    const farmacias = farmaciaIds.length
+      ? await Farmacia.find({ _id: { $in: farmaciaIds } }).select('nombreFarmacia')
+      : [];
+    const farmaciaById = new Map(farmacias.map((f) => [f._id.toString(), f]));
+
+    let totalVentas = 0;
+    let totalComisionVentas3Pct = 0;
+    const porFarmacia = ventasAgg.map((v) => {
+      const tv = v.totalVentas || 0;
+      const com = tv * 0.03;
+      totalVentas += tv;
+      totalComisionVentas3Pct += com;
+      const fid = v._id?.toString();
+      const f = fid ? farmaciaById.get(fid) : null;
+      return {
+        farmaciaId: fid,
+        nombreFarmacia: f?.nombreFarmacia || 'Desconocida',
+        totalVentas: Math.round(tv * 100) / 100,
+        comision3Pct: Math.round(com * 100) / 100,
+      };
+    });
+
+    // Delivery: stats por repartidor
+    const deliveryAgg = await DeliveryStats.aggregate([
+      {
+        $group: {
+          _id: '$deliveryId',
+          totalBruto: { $sum: '$montoGanado' },
+        },
+      },
+    ]);
+
+    const deliveryIds = deliveryAgg.map((d) => d._id).filter(Boolean);
+    const deliveries = deliveryIds.length
+      ? await User.find({ _id: { $in: deliveryIds } }).select('nombre email')
+      : [];
+    const deliveryById = new Map(deliveries.map((d) => [d._id.toString(), d]));
+
+    let totalDeliveryBruto = 0;
+    let totalComisionDelivery20Pct = 0;
+    const porDelivery = deliveryAgg.map((d) => {
+      const bruto = d.totalBruto || 0;
+      const com = bruto * 0.2;
+      const pagar = bruto * 0.8;
+      totalDeliveryBruto += bruto;
+      totalComisionDelivery20Pct += com;
+      const did = d._id?.toString();
+      const u = did ? deliveryById.get(did) : null;
+      return {
+        deliveryId: did,
+        nombre: u?.nombre || 'Desconocido',
+        email: u?.email || null,
+        totalDeliveryBruto: Math.round(bruto * 100) / 100,
+        pagarDelivery: Math.round(pagar * 100) / 100,
+        comisionApp20Pct: Math.round(com * 100) / 100,
+      };
+    });
+
+    const gananciaTotalApp = totalComisionVentas3Pct + totalComisionDelivery20Pct;
+
+    res.json({
+      totalVentas: Math.round(totalVentas * 100) / 100,
+      totalComisionVentas3Pct: Math.round(totalComisionVentas3Pct * 100) / 100,
+      porFarmacia,
+      totalDeliveryBruto: Math.round(totalDeliveryBruto * 100) / 100,
+      totalComisionDelivery20Pct: Math.round(totalComisionDelivery20Pct * 100) / 100,
+      porDelivery,
+      gananciaTotalApp: Math.round(gananciaTotalApp * 100) / 100,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener resumen de finanzas' });
   }
 });
 

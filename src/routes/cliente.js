@@ -14,6 +14,7 @@ import { upload } from '../middleware/upload.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
 
 const router = Router();
+const GOOGLE_DISTANCE_MATRIX_API_KEY = process.env.GOOGLE_DISTANCE_MATRIX_API_KEY;
 
 function getClienteId(req) {
   if (req.role === 'master' && (req.headers['x-cliente-id'] || req.query.clienteId)) {
@@ -268,16 +269,6 @@ router.get('/delivery/estimado', async (req, res) => {
     ];
     const RECARGO_FARMACIA_ADICIONAL = 0.5;
 
-    function kmEntre(lat1, lng1, lat2, lng2) {
-      const R = 6371; // km
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLng = (lng2 - lng1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) ** 2
-        + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    }
-
     const numFarmacias = byFarmacia.size;
 
     // 1) Determinar coordenadas del cliente: primero query ?lat,lng, si no usar ultimaLat/ultimaLng guardadas.
@@ -299,10 +290,40 @@ router.get('/delivery/estimado', async (req, res) => {
       const farmaciaIds = Array.from(byFarmacia.keys());
       const farmacias = await Farmacia.find({ _id: { $in: farmaciaIds } }).select('lat lng');
 
-      const distancias = [];
-      for (const f of farmacias) {
-        if (typeof f.lat === 'number' && typeof f.lng === 'number') {
-          distancias.push(kmEntre(latCliente, lngCliente, f.lat, f.lng));
+      const coordsFarmacias = farmacias.filter((f) => typeof f.lat === 'number' && typeof f.lng === 'number');
+
+      let distancias = [];
+
+      if (GOOGLE_DISTANCE_MATRIX_API_KEY && coordsFarmacias.length) {
+        try {
+          const origins = `${latCliente},${lngCliente}`;
+          const destinos = coordsFarmacias.map((f) => `${f.lat},${f.lng}`).join('|');
+          const url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=metric&mode=driving&origins=${encodeURIComponent(origins)}&destinations=${encodeURIComponent(destinos)}&key=${GOOGLE_DISTANCE_MATRIX_API_KEY}`;
+          const resp = await fetch(url);
+          if (resp.ok) {
+            const data = await resp.json();
+            const elements = data?.rows?.[0]?.elements || [];
+            for (const el of elements) {
+              if (el.status === 'OK' && el.distance?.value != null) {
+                distancias.push(el.distance.value / 1000); // km
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Distance Matrix error', err);
+        }
+      }
+
+      // Fallback o complemento: si Distance Matrix no dio nada, usar Haversine aproximado.
+      if (!distancias.length) {
+        for (const f of coordsFarmacias) {
+          const R = 6371; // km
+          const dLat = (f.lat - latCliente) * Math.PI / 180;
+          const dLng = (f.lng - lngCliente) * Math.PI / 180;
+          const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(latCliente * Math.PI / 180) * Math.cos(f.lat * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          distancias.push(R * c);
         }
       }
 
