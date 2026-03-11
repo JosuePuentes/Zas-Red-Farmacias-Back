@@ -653,35 +653,95 @@ function mapProductoToDTO(p) {
   };
 }
 
-// Inventario detallado para la farmacia. Si Plan Full: añade existenciaGlobal (suma de existencia por codigo en todas las farmacias) y productosSolicitados (cantidad de solicitudes de clientes por codigo).
+// Inventario detallado para la farmacia.
+// - Siempre muestra TODO el catálogo maestro (código/descripcion/marca) aunque la farmacia no tenga inventario cargado.
+// - Para cada código, si la farmacia tiene Producto propio, se muestran su precio/existencia/imagen.
+// - Si la farmacia tiene Plan Full, añade existenciaGlobal (suma de existencia por codigo en todas las farmacias)
+//   y productosSolicitados (cantidad de solicitudes de clientes por codigo).
 router.get('/inventario', async (req, res) => {
   try {
     const farmaciaId = getFarmaciaId(req);
     if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
     const farmacia = await Farmacia.findById(farmaciaId).select('planProActivo');
-    const productos = await Producto.find({ farmaciaId }).sort({ codigo: 1 });
-    let dto = productos.map(mapProductoToDTO);
 
+    // 1) Catálogo maestro completo: base de todos los códigos que se mostrarán.
+    const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
+    const coll = dbCatalogo.collection('catalogo_maestro');
+    const catalogoDocs = await coll
+      .find({}, { projection: { ean_13: 1, description: 1, brand: 1, image_path: 1 } })
+      .toArray();
+
+    // 2) Productos de esta farmacia (solo los suyos, mach por codigo).
+    const productosFarmacia = await Producto.find({ farmaciaId }).sort({ codigo: 1 });
+    const productoByCodigo = new Map(productosFarmacia.map((p) => [p.codigo, p]));
+
+    // 3) Para Plan Full: existencia global y solicitudes por código, en TODO el catálogo.
+    let globalByCodigo = new Map();
+    let solicitudesByCodigo = new Map();
     if (farmacia?.planProActivo) {
-      const codigos = [...new Set(productos.map((p) => p.codigo))];
-      const [globalAgg, solicitudesAgg] = await Promise.all([
-        Producto.aggregate([
-          { $match: { codigo: { $in: codigos } } },
-          { $group: { _id: '$codigo', existenciaGlobal: { $sum: '$existencia' } } },
-        ]),
-        SolicitudProductoCliente.aggregate([
-          { $match: { codigo: { $in: codigos } } },
-          { $group: { _id: '$codigo', productosSolicitados: { $sum: 1 } } },
-        ]),
-      ]);
-      const globalByCodigo = new Map(globalAgg.map((g) => [g._id, g.existenciaGlobal]));
-      const solicitudesByCodigo = new Map(solicitudesAgg.map((s) => [s._id, s.productosSolicitados]));
-      dto = dto.map((p) => ({
-        ...p,
-        existenciaGlobal: globalByCodigo.get(p.codigo) ?? 0,
-        productosSolicitados: solicitudesByCodigo.get(p.codigo) ?? 0,
-      }));
+      const codigos = [...new Set(catalogoDocs.map((d) => d.ean_13).filter(Boolean))];
+      if (codigos.length) {
+        const [globalAgg, solicitudesAgg] = await Promise.all([
+          Producto.aggregate([
+            { $match: { codigo: { $in: codigos } } },
+            { $group: { _id: '$codigo', existenciaGlobal: { $sum: '$existencia' } } },
+          ]),
+          SolicitudProductoCliente.aggregate([
+            { $match: { codigo: { $in: codigos } } },
+            { $group: { _id: '$codigo', productosSolicitados: { $sum: 1 } } },
+          ]),
+        ]);
+        globalByCodigo = new Map(globalAgg.map((g) => [g._id, g.existenciaGlobal]));
+        solicitudesByCodigo = new Map(solicitudesAgg.map((s) => [s._id, s.productosSolicitados]));
+      }
     }
+
+    // 4) Armar DTO por cada código del catálogo maestro.
+    const dto = catalogoDocs.map((d) => {
+      const codigo = d.ean_13;
+      const prod = productoByCodigo.get(codigo) || null;
+      const descuento = prod ? clampPercentage(prod.descuentoPorcentaje) : 0;
+      const precioBase = prod ? Number(prod.precioBase) || 0 : null;
+      const precioConPorcentaje = prod ? calcularPrecioConDescuento(precioBase, descuento) : null;
+
+      const descripcionCatalogo = (d.description && d.description.trim())
+        || (prod && prod.descripcionCatalogo)
+        || (prod && prod.descripcion)
+        || '';
+
+      const marca = (d.brand && d.brand.trim())
+        || (prod && prod.marca)
+        || '';
+
+      const base = {
+        id: prod ? prod._id.toString() : null,
+        codigo,
+        descripcion: descripcionCatalogo,
+        descripcionCatalogo: prod?.descripcionCatalogo || descripcionCatalogo,
+        descripcionPersonalizada: prod?.descripcionPersonalizada || null,
+        usarDescripcionCatalogo: prod ? !!prod.usarDescripcionCatalogo : true,
+        principioActivo: prod?.principioActivo || null,
+        presentacion: prod?.presentacion || null,
+        marca,
+        categoria: prod?.categoria || null,
+        precio: precioBase,
+        descuentoPorcentaje: descuento,
+        precioConPorcentaje,
+        existencia: prod?.existencia ?? 0,
+        imagen: prod?.foto || d.image_path || null,
+        farmaciaId,
+      };
+
+      if (farmacia?.planProActivo) {
+        return {
+          ...base,
+          existenciaGlobal: globalByCodigo.get(codigo) ?? 0,
+          productosSolicitados: solicitudesByCodigo.get(codigo) ?? 0,
+        };
+      }
+
+      return base;
+    });
 
     res.json(dto);
   } catch (e) {
@@ -692,33 +752,88 @@ router.get('/inventario', async (req, res) => {
 
 // Resolver conflictos de descripción: body { decisiones: [ { codigo, usar: 'catalogo' | 'farmacia' } ] }
 router.post('/inventario/resolver-descripciones', async (req, res) => {
-    try {
-      const decisiones = Array.isArray(req.body.decisiones) ? req.body.decisiones : [];
-      const invalid = decisiones.some(d => !d?.codigo || !['catalogo', 'farmacia'].includes(d.usar));
-      if (invalid) return res.status(400).json({ error: 'decisiones: array de { codigo, usar: "catalogo"|"farmacia" }' });
+  try {
+    const decisiones = Array.isArray(req.body.decisiones) ? req.body.decisiones : [];
+    const invalid = decisiones.some((d) => !d?.codigo || !['catalogo', 'farmacia'].includes(d.usar));
+    if (invalid) return res.status(400).json({ error: 'decisiones: array de { codigo, usar: \"catalogo\"|\"farmacia\" }' });
 
-      const farmaciaId = getFarmaciaId(req);
-      if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+    const farmaciaId = getFarmaciaId(req);
+    if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
 
-      let resueltos = 0;
-      for (const d of decisiones) {
-        const producto = await Producto.findOne({ farmaciaId, codigo: d.codigo });
-        if (!producto) continue;
-        const usarCatalogo = d.usar === 'catalogo';
-        producto.usarDescripcionCatalogo = usarCatalogo;
-        producto.descripcion = usarCatalogo && producto.descripcionCatalogo
-          ? producto.descripcionCatalogo
-          : (producto.descripcionPersonalizada || producto.descripcion);
+    let resueltos = 0;
+
+    for (const d of decisiones) {
+      const codigo = String(d.codigo).trim();
+      if (!codigo) continue;
+
+      const producto = await Producto.findOne({ farmaciaId, codigo });
+      if (!producto) continue;
+
+      if (d.usar === 'catalogo') {
+        // Mantener descripción del sistema (catalogo)
+        producto.usarDescripcionCatalogo = true;
+        if (producto.descripcionCatalogo) {
+          producto.descripcion = producto.descripcionCatalogo;
+        }
         await producto.save();
         resueltos++;
+        continue;
       }
-      res.json({ ok: true, resueltos });
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ error: 'Error al resolver descripciones' });
+
+      // usar === 'farmacia' → crear producto interno clonando foto y datos base
+      const descripcionArchivo = producto.descripcionPersonalizada || producto.descripcion;
+      const descripcionFinal = descripcionArchivo || producto.descripcionCatalogo || producto.descripcion || codigo;
+      const codigoInterno = `INT-${farmaciaId}-${codigo}`;
+
+      // Si ya existe un interno con ese codigoInterno para esta farmacia, lo reutilizamos
+      let interno = await Producto.findOne({ farmaciaId, codigo: codigoInterno });
+      if (!interno) {
+        interno = await Producto.create({
+          farmaciaId,
+          codigo: codigoInterno,
+          descripcion: descripcionFinal,
+          descripcionCatalogo: producto.descripcionCatalogo,
+          descripcionPersonalizada: descripcionArchivo,
+          usarDescripcionCatalogo: false,
+          principioActivo: producto.principioActivo,
+          presentacion: producto.presentacion,
+          marca: producto.marca,
+          categoria: producto.categoria,
+          precioBase: producto.precioBase,
+          descuentoPorcentaje: producto.descuentoPorcentaje || 0,
+          precioConPorcentaje: producto.precioConPorcentaje,
+          existencia: producto.existencia,
+          foto: producto.foto,
+        });
+      } else {
+        // Actualizar interno con los últimos datos de la farmacia
+        interno.descripcion = descripcionFinal;
+        interno.descripcionPersonalizada = descripcionArchivo;
+        interno.usarDescripcionCatalogo = false;
+        interno.precioBase = producto.precioBase;
+        interno.descuentoPorcentaje = producto.descuentoPorcentaje || 0;
+        interno.precioConPorcentaje = producto.precioConPorcentaje;
+        interno.existencia = producto.existencia;
+        interno.foto = producto.foto;
+        await interno.save();
+      }
+
+      // Opcional: dejar el producto original usando la descripción de catálogo
+      producto.usarDescripcionCatalogo = true;
+      if (producto.descripcionCatalogo) {
+        producto.descripcion = producto.descripcionCatalogo;
+      }
+      await producto.save();
+
+      resueltos++;
     }
+
+    res.json({ ok: true, resueltos });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al resolver descripciones' });
   }
-);
+});
 
 // Actualizar descuentos de productos (masivo e individual)
 router.patch('/inventario/descuentos', async (req, res) => {
