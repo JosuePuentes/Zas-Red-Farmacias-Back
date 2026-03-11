@@ -223,46 +223,40 @@ router.post('/solicitudes-plan-pro/:id/denegar', async (req, res) => {
   }
 });
 
-// Aprobar solicitud delivery: crear User delivery y asignar contraseña
-router.post('/solicitudes-delivery/:id/aprobar',
-  body('password').isLength({ min: 6 }),
-  async (req, res) => {
-    try {
-      const err = validationResult(req);
-      if (!err.isEmpty()) return res.status(400).json({ error: 'Contraseña requerida (mín. 6 caracteres)' });
-
-      const sol = await SolicitudDelivery.findById(req.params.id);
-      if (!sol || sol.estado !== 'pendiente') {
-        return res.status(400).json({ error: 'Solicitud no encontrada o ya procesada' });
-      }
-
-      const exists = await User.findOne({ email: sol.correo.toLowerCase() });
-      if (exists) return res.status(400).json({ error: 'Ya existe un usuario con ese correo' });
-
-      const user = await User.create({
-        email: sol.correo.toLowerCase(),
-        password: req.body.password,
-        role: 'delivery',
-        nombre: sol.nombreCompleto,
-        cedula: sol.cedula,
-        direccion: sol.direccion,
-        telefono: sol.telefono,
-        fotoCarnet: sol.fotoCarnetUrl,
-        deliveryAprobado: true,
-      });
-
-      await SolicitudDelivery.updateOne(
-        { _id: req.params.id },
-        { estado: 'aprobado', usuarioId: user._id }
-      );
-
-      res.json({ message: 'Delivery aprobado', userId: user._id });
-    } catch (e) {
-      console.error(e);
-      res.status(500).json({ error: 'Error al aprobar' });
+// Aprobar solicitud delivery: crear User delivery usando la contraseña guardada en la solicitud
+router.post('/solicitudes-delivery/:id/aprobar', async (req, res) => {
+  try {
+    const sol = await SolicitudDelivery.findById(req.params.id);
+    if (!sol || sol.estado !== 'pendiente') {
+      return res.status(400).json({ error: 'Solicitud no encontrada o ya procesada' });
     }
+
+    const exists = await User.findOne({ email: sol.correo.toLowerCase() });
+    if (exists) return res.status(400).json({ error: 'Ya existe un usuario con ese correo' });
+
+    const user = await User.create({
+      email: sol.correo.toLowerCase(),
+      password: sol.password, // ya viene hasheada desde el formulario de solicitud
+      role: 'delivery',
+      nombre: sol.nombreCompleto,
+      cedula: sol.cedula,
+      direccion: sol.direccion,
+      telefono: sol.telefono,
+      fotoCarnet: sol.fotoCarnetUrl,
+      deliveryAprobado: true,
+    });
+
+    await SolicitudDelivery.updateOne(
+      { _id: req.params.id },
+      { estado: 'aprobado', usuarioId: user._id }
+    );
+
+    res.json({ message: 'Delivery aprobado', userId: user._id });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al aprobar' });
   }
-);
+});
 
 // Denegar solicitud delivery
 router.post('/solicitudes-delivery/:id/denegar', async (req, res) => {

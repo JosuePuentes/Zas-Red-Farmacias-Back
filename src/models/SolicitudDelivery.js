@@ -2,15 +2,18 @@ import mongoose from 'mongoose';
 
 const solicitudDeliverySchema = new mongoose.Schema({
   correo: { type: String, required: true },
+  password: { type: String, required: true },
   tipoVehiculo: { type: String, enum: ['moto', 'carro'], required: true },
   cedula: { type: String, required: true },
   nombreCompleto: { type: String, required: true },
   direccion: { type: String, required: true },
   telefono: { type: String, required: true },
   numeroLicencia: { type: String, required: true },
+  matriculaVehiculo: { type: String, required: true },
   fotoLicenciaUrl: { type: String, required: true },
   carnetCirculacionUrl: { type: String, required: true },
   fotoCarnetUrl: { type: String, required: true },
+  fotoVehiculoUrl: { type: String },
   estado: {
     type: String,
     enum: ['pendiente', 'aprobado', 'denegado'],
