@@ -16,8 +16,28 @@ router.use(auth, requireRole('master'));
 // Listar todas las farmacias (para que master elija "entrar como" una farmacia)
 router.get('/farmacias', async (req, res) => {
   try {
-    const list = await Farmacia.find().select('nombreFarmacia rif estado direccion telefono planProActivo').sort({ nombreFarmacia: 1 });
-    res.json(list);
+    const list = await Farmacia.find()
+      .select('nombreFarmacia rif estado direccion telefono lat lng planProActivo usuarioId')
+      .populate('usuarioId', 'email')
+      .sort({ nombreFarmacia: 1 });
+
+    const mapped = list.map((f) => {
+      const obj = f.toObject();
+      return {
+        _id: obj._id,
+        nombreFarmacia: obj.nombreFarmacia,
+        rif: obj.rif,
+        direccion: obj.direccion,
+        telefono: obj.telefono,
+        estado: obj.estado,
+        lat: obj.lat,
+        lng: obj.lng,
+        email: obj.usuarioId?.email || null,
+        planProActivo: obj.planProActivo,
+      };
+    });
+
+    res.json(mapped);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar farmacias' });
