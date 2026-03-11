@@ -20,6 +20,21 @@ function getDeliveryId(req) {
   return req.userId;
 }
 
+function kmEntre(lat1, lng1, lat2, lng2) {
+  const n1 = Number(lat1);
+  const n2 = Number(lng1);
+  const n3 = Number(lat2);
+  const n4 = Number(lng2);
+  if (![n1, n2, n3, n4].every((v) => Number.isFinite(v))) return Infinity;
+  const R = 6371; // km
+  const dLat = (n3 - n1) * Math.PI / 180;
+  const dLng = (n4 - n2) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(n1 * Math.PI / 180) * Math.cos(n3 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 // Actualizar posición del delivery en tiempo real (para que el cliente vea dónde va)
 router.patch('/ubicacion',
   body('lat').isFloat(),
@@ -82,11 +97,18 @@ router.get('/pedidos-disponibles', async (req, res) => {
         tiempoLimite = new Date(p.createdAt.getTime() + 60 * 1000);
         if (now > tiempoLimite) continue; // ya pasó el minuto
       } else if (now > tiempoLimite) continue;
-      result.push({
+      const obj = {
         ...p.toObject(),
         tiempoLimiteAceptar: tiempoLimite,
         precioDelivery: p.costoDelivery,
-      });
+      };
+      if (p.farmaciaId?.lat != null && p.farmaciaId?.lng != null) {
+        obj.coordsFarmacia = { lat: p.farmaciaId.lat, lng: p.farmaciaId.lng };
+      }
+      if (p.lat != null && p.lng != null) {
+        obj.coordsEntrega = { lat: p.lat, lng: p.lng };
+      }
+      result.push(obj);
     }
     res.json(result);
   } catch (e) {
@@ -110,6 +132,31 @@ router.post('/pedidos/:id/aceptar', async (req, res) => {
     if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
     if (pedido.estado !== 'validado' || pedido.deliveryId) {
       return res.status(400).json({ error: 'Pedido ya asignado o no disponible' });
+    }
+
+    // Limitar a máximo 3 pedidos activos (asignado o en_camino)
+    const activos = await Pedido.countDocuments({
+      deliveryId: getDeliveryId(req),
+      estado: { $in: ['asignado_delivery', 'en_camino'] },
+    });
+    if (activos >= 3) {
+      return res.status(400).json({ error: 'Ya tienes el máximo de 3 pedidos activos.' });
+    }
+
+    // Verificar cercanía con pedidos activos existentes (si los hay)
+    const pedidosActivos = await Pedido.find({
+      deliveryId: getDeliveryId(req),
+      estado: { $in: ['asignado_delivery', 'en_camino'] },
+    }).select('lat lng');
+    const latNueva = pedido.lat;
+    const lngNueva = pedido.lng;
+    for (const pa of pedidosActivos) {
+      const dKm = kmEntre(pa.lat, pa.lng, latNueva, lngNueva);
+      if (dKm === Infinity || dKm > 3) {
+        return res.status(400).json({
+          error: 'Las entregas no están lo suficientemente cerca para agrupar pedidos.',
+        });
+      }
     }
 
     const tiempoLimite = pedido.tiempoLimiteAceptar || new Date(pedido.createdAt.getTime() + 60 * 1000);
@@ -146,11 +193,29 @@ router.post('/pedidos/:id/aceptar', async (req, res) => {
 // Mis pedidos asignados (en camino, etc.) con datos de cliente y farmacia (incl. coordenadas farmacia)
 router.get('/mis-pedidos', async (req, res) => {
   try {
-    const pedidos = await Pedido.find({ deliveryId: getDeliveryId(req) })
+    const deliveryId = getDeliveryId(req);
+    const user = await User.findById(deliveryId).select('ultimaLat ultimaLng');
+    const pedidos = await Pedido.find({ deliveryId })
       .populate('clienteId', 'nombre apellido telefono direccion estado municipio')
       .populate('farmaciaId', 'nombreFarmacia direccion telefono estado lat lng')
       .sort({ aceptadoEn: -1 });
-    res.json(pedidos);
+    const list = pedidos.map((p) => {
+      const obj = p.toObject();
+      if (p.farmaciaId?.lat != null && p.farmaciaId?.lng != null) {
+        obj.coordsFarmacia = { lat: p.farmaciaId.lat, lng: p.farmaciaId.lng };
+      }
+      if (p.lat != null && p.lng != null) {
+        obj.coordsEntrega = { lat: p.lat, lng: p.lng };
+      }
+      if (user?.ultimaLat != null && user?.ultimaLng != null && p.lat != null && p.lng != null) {
+        const dKm = kmEntre(user.ultimaLat, user.ultimaLng, p.lat, p.lng);
+        obj.puedeMarcarEntregado = Number.isFinite(dKm) && dKm <= 0.15; // ~150m
+      } else {
+        obj.puedeMarcarEntregado = false;
+      }
+      return obj;
+    });
+    res.json(list);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar pedidos' });
@@ -176,7 +241,7 @@ router.patch('/pedidos/:id/eta',
   }
 );
 
-// Marcar en camino / entregado
+// Marcar en camino / entregado (estado genérico, usado internamente)
 router.patch('/pedidos/:id/estado',
   body('estado').isIn(['en_camino', 'entregado']),
   async (req, res) => {
@@ -203,6 +268,54 @@ router.patch('/pedidos/:id/estado',
     }
   }
 );
+
+// Marcar pedido como entregado (con validación de cercanía y actualización de stats)
+router.post('/pedidos/:id/entregar', async (req, res) => {
+  try {
+    const deliveryId = getDeliveryId(req);
+    const user = await User.findById(deliveryId).select('ultimaLat ultimaLng');
+    const pedido = await Pedido.findOne({ _id: req.params.id, deliveryId })
+      .populate('farmaciaId', 'lat lng');
+    if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+    if (!['asignado_delivery', 'en_camino'].includes(pedido.estado)) {
+      return res.status(400).json({ error: 'Estado inválido para marcar entregado' });
+    }
+
+    // Verificar cercanía al punto de entrega (defensa extra además de puedeMarcarEntregado)
+    if (user?.ultimaLat != null && user?.ultimaLng != null && pedido.lat != null && pedido.lng != null) {
+      const dKm = kmEntre(user.ultimaLat, user.ultimaLng, pedido.lat, pedido.lng);
+      if (!Number.isFinite(dKm) || dKm > 0.15) {
+        return res.status(400).json({ error: 'Debes estar cerca del punto de entrega para marcar entregado.' });
+      }
+    }
+
+    pedido.estado = 'entregado';
+    await pedido.save();
+
+    // Calcular km recorridos aprox. farmacia -> cliente (si hay coords)
+    let kmPedido = 0;
+    if (pedido.farmaciaId?.lat != null && pedido.farmaciaId?.lng != null && pedido.lat != null && pedido.lng != null) {
+      kmPedido = kmEntre(pedido.farmaciaId.lat, pedido.farmaciaId.lng, pedido.lat, pedido.lng);
+    }
+
+    await DeliveryStats.updateOne(
+      { deliveryId, pedidoId: pedido._id },
+      { $set: { kmRecorridos: kmPedido } },
+    );
+
+    await Notificacion.create({
+      userId: pedido.clienteId,
+      tipo: 'pedido_entregado',
+      mensaje: 'Tu pedido ha sido entregado.',
+      pedidoId: pedido._id,
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al marcar como entregado' });
+  }
+});
 
 // Actualizar km en un pedido
 router.patch('/pedidos/:id/km', body('km').isFloat({ min: 0 }), async (req, res) => {
