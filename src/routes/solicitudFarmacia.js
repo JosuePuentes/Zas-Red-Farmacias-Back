@@ -16,8 +16,8 @@ router.post('/',
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 6 }),
   body('estadoUbicacion').optional().trim(),
-  body('lat').optional().isFloat(),
-  body('lng').optional().isFloat(),
+  body('lat').isFloat({ min: -90, max: 90 }),
+  body('lng').isFloat({ min: -180, max: 180 }),
   async (req, res) => {
     try {
       const err = validationResult(req);
