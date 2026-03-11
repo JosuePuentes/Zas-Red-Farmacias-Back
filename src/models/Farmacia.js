@@ -8,8 +8,8 @@ const farmaciaSchema = new mongoose.Schema({
   direccion: { type: String, required: true },
   telefono: { type: String, required: true },
   estado: { type: String, required: true }, // Estado de Venezuela (ej: Miranda, Carabobo)
-  lat: Number,  // Coordenadas para que el delivery sepa dónde recoger
-  lng: Number,
+  lat: { type: Number, required: true, min: -90, max: 90 },  // Coordenadas para que el delivery sepa dónde recoger
+  lng: { type: Number, required: true, min: -180, max: 180 },
   porcentajePrecio: { type: Number, required: true, default: 0 }, // % que se suma al precio de cada producto
   planProActivo: { type: Boolean, default: false },
 }, { timestamps: true });

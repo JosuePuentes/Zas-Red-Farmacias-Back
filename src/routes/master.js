@@ -48,8 +48,8 @@ router.post('/farmacias',
   body('telefono').notEmpty().trim(),
   body('estado').isIn(ESTADOS_VENEZUELA),
   body('porcentajePrecio').isFloat({ min: 0, max: 100 }),
-  body('lat').optional().isFloat(),
-  body('lng').optional().isFloat(),
+  body('lat').isFloat({ min: -90, max: 90 }),
+  body('lng').isFloat({ min: -180, max: 180 }),
   async (req, res) => {
     try {
       const err = validationResult(req);
