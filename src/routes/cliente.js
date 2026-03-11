@@ -878,7 +878,7 @@ router.patch('/ubicacion', body('lat').isFloat(), body('lng').isFloat(), async (
   }
 });
 
-// Mis pedidos (incluye etaEntrega para mostrar ETA al cliente)
+// Mis pedidos (incluye etaEntrega y posición del delivery para seguimiento sencillo)
 router.get('/mis-pedidos', async (req, res) => {
   try {
     const pedidos = await Pedido.find({ clienteId: getClienteId(req) })
@@ -886,6 +886,47 @@ router.get('/mis-pedidos', async (req, res) => {
       .populate('deliveryId', 'nombre ultimaLat ultimaLng')
       .sort({ createdAt: -1 });
     res.json(pedidos);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar pedidos' });
+  }
+});
+
+// API simplificada para portal cliente: historial y pedidos en curso
+// Forma: PedidoClienteApi[]
+router.get('/pedidos', async (req, res) => {
+  try {
+    const pedidos = await Pedido.find({ clienteId: getClienteId(req) })
+      .populate('deliveryId', 'ultimaLat ultimaLng')
+      .sort({ createdAt: -1 });
+
+    const now = Date.now();
+    const items = pedidos.map((p) => {
+      const obj = p.toObject();
+      let etaMinutos = null;
+      let etaHoraLlegada = null;
+      if (obj.etaEntrega instanceof Date) {
+        const diffMs = obj.etaEntrega.getTime() - now;
+        etaMinutos = Math.round(diffMs / (60 * 1000));
+        if (etaMinutos < 0) etaMinutos = 0;
+        etaHoraLlegada = obj.etaEntrega.toISOString();
+      }
+      return {
+        _id: obj._id.toString(),
+        estado: obj.estado,
+        total: obj.total,
+        direccionEntrega: obj.direccionEntrega,
+        latEntrega: obj.lat,
+        lngEntrega: obj.lng,
+        deliveryLat: obj.deliveryId?.ultimaLat ?? null,
+        deliveryLng: obj.deliveryId?.ultimaLng ?? null,
+        etaMinutos,
+        etaHoraLlegada,
+        createdAt: obj.createdAt,
+      };
+    });
+
+    res.json(items);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar pedidos' });
