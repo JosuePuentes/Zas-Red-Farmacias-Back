@@ -9,6 +9,7 @@ import { connectDB } from './config/db.js';
 const __dirnameUp = path.dirname(fileURLToPath(import.meta.url));
 const uploadDir = process.env.UPLOAD_DIR || path.join(__dirnameUp, '../uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+// Imágenes de catálogo maestro (backend/public/productos)
 const publicDir = path.join(__dirnameUp, '../public');
 import authRoutes from './routes/auth.js';
 import masterRoutes from './routes/master.js';
