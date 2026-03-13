@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import fs from 'fs/promises';
 import mongoose from 'mongoose';
 import { body, validationResult } from 'express-validator';
 import Producto from '../models/Producto.js';
@@ -12,9 +13,13 @@ import User from '../models/User.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const router = Router();
 const GOOGLE_DISTANCE_MATRIX_API_KEY = process.env.GOOGLE_DISTANCE_MATRIX_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+
+const geminiClient = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
 function getClienteId(req) {
   if (req.role === 'master' && (req.headers['x-cliente-id'] || req.query.clienteId)) {
@@ -609,6 +614,90 @@ router.get('/recetas/buscar', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al buscar receta' });
+  }
+});
+
+// POST /api/cliente/recetas/analizar-imagen
+// Body: multipart/form-data con campo de archivo "file"
+// Respuesta: { medicamento, dosis, cantidad, es_recipe }
+router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Falta la imagen del récipe.' });
+    }
+    if (!geminiClient || !GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'No se pudo analizar la imagen' });
+    }
+
+    const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    // Leer el archivo desde disco y convertir a base64
+    const filePath = req.file.path;
+    let base64;
+    try {
+      const buffer = await fs.readFile(filePath);
+      base64 = buffer.toString('base64');
+    } catch (err) {
+      console.error('Error leyendo archivo de receta:', err);
+      return res.status(500).json({ error: 'No se pudo analizar la imagen' });
+    }
+
+    const prompt = [
+      'Eres un asistente de farmacia en Zulia, Venezuela. Tu tarea es analizar este récipe médico.',
+      'Extrae el nombre del medicamento, la concentración y la cantidad.',
+      'Responde EXCLUSIVAMENTE en un objeto JSON con este formato:',
+      '{ "medicamento": string, "dosis": string, "cantidad": string, "es_recipe": boolean }.',
+      'Si la imagen no parece un récipe médico, pon es_recipe en false.',
+    ].join(' ');
+
+    let text;
+    try {
+      const result = await model.generateContent([
+        { text: prompt },
+        {
+          inlineData: {
+            data: base64,
+            mimeType: req.file.mimetype || 'image/jpeg',
+          },
+        },
+      ]);
+      text = result.response.text().trim();
+    } catch (err) {
+      console.error('Error llamando a Gemini:', err);
+      return res.status(500).json({ error: 'No se pudo analizar la imagen' });
+    }
+
+    let parsed = null;
+    try {
+      const cleaned = text
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+      parsed = JSON.parse(cleaned);
+    } catch (err) {
+      parsed = null;
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return res.json({
+        medicamento: '',
+        dosis: '',
+        cantidad: '',
+        es_recipe: false,
+      });
+    }
+
+    const out = {
+      medicamento: typeof parsed.medicamento === 'string' ? parsed.medicamento : '',
+      dosis: typeof parsed.dosis === 'string' ? parsed.dosis : '',
+      cantidad: typeof parsed.cantidad === 'string' ? parsed.cantidad : '',
+      es_recipe: Boolean(parsed.es_recipe),
+    };
+
+    return res.json(out);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'No se pudo analizar la imagen' });
   }
 });
 
