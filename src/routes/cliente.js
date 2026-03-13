@@ -508,12 +508,12 @@ router.post('/solicitar-producto', async (req, res) => {
   }
 });
 
-// --- Recetas / escáner: buscar por texto y agregar al carrito en lote ---
-// GET /api/cliente/recetas/buscar?q= — busca en catálogo maestro y en Producto (con stock); devuelve ofertas para agregar al carrito.
+// --- Recetas / escáner: buscar por texto y agregar al carrito ---
+// GET /api/cliente/recetas/buscar?q= — busca en catálogo maestro y en Producto (con stock); devuelve RecetaBuscarItem[] plano para el frontend.
 router.get('/recetas/buscar', async (req, res) => {
   try {
     const q = (req.query.q && String(req.query.q).trim()) || '';
-    if (!q) return res.json({ coincidencias: [] });
+    if (!q) return res.json([]);
 
     const search = new RegExp(q, 'i');
     const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
@@ -536,27 +536,32 @@ router.get('/recetas/buscar', async (req, res) => {
       ],
     }).populate('farmaciaId', 'nombreFarmacia').limit(100);
 
+    // Agrupamos por código para unificar catálogo maestro y productos con stock.
     const byCodigo = new Map();
     for (const d of fromMaestro) {
       const cod = (d.ean_13 || '').toString();
+      if (!cod) continue;
       if (!byCodigo.has(cod)) {
         byCodigo.set(cod, {
           codigo: cod,
           descripcion: d.description || '',
           marca: d.brand || '',
           imagen: d.image_path || null,
+          maestroId: d._id?.toString?.() || null,
           ofertas: [],
         });
       }
     }
     for (const p of productos) {
       const cod = (p.codigo || '').toString();
+      if (!cod) continue;
       if (!byCodigo.has(cod)) {
         byCodigo.set(cod, {
           codigo: cod,
           descripcion: p.descripcion || '',
           marca: p.marca || '',
           imagen: p.foto || null,
+          maestroId: null,
           ofertas: [],
         });
       }
@@ -570,30 +575,106 @@ router.get('/recetas/buscar', async (req, res) => {
       });
     }
 
-    const coincidencias = Array.from(byCodigo.values());
-    res.json({ coincidencias });
+    // Adaptamos la respuesta a RecetaBuscarItem[]:
+    // { id: string, codigo: string, descripcion: string, precio: number, farmaciaId: string | null, existencia: number }
+    const items = Array.from(byCodigo.values()).map((entry) => {
+      const { codigo, descripcion, maestroId, ofertas } = entry;
+      if (ofertas.length === 0) {
+        // Solo catálogo maestro: sin stock asociado todavía.
+        return {
+          id: maestroId || codigo,
+          codigo,
+          descripcion,
+          precio: 0,
+          farmaciaId: null,
+          existencia: 0,
+        };
+      }
+      // Elegimos la mejor oferta (precio mínimo) para ese código.
+      let best = ofertas[0];
+      for (const ofr of ofertas) {
+        if (ofr.precio < best.precio) best = ofr;
+      }
+      return {
+        id: best.productoId,
+        codigo,
+        descripcion,
+        precio: best.precio,
+        farmaciaId: best.farmaciaId || null,
+        existencia: best.existencia ?? 0,
+      };
+    });
+
+    res.json(items);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al buscar receta' });
   }
 });
 
-// POST /api/cliente/recetas/agregar-al-carrito — body: { items: [ { productoId, cantidad } ] }
+// POST /api/cliente/recetas/agregar-al-carrito
+// Soporta:
+// - body: { items: [ { productoId, cantidad } ] }  (modo lote actual)
+// - body: { productoId, cantidad }
+// - body: { codigo, cantidad }
 router.post('/recetas/agregar-al-carrito', async (req, res) => {
   try {
-    const items = Array.isArray(req.body.items) ? req.body.items : [];
-    if (!items.length) return res.status(400).json({ error: 'items debe ser un array de { productoId, cantidad }' });
+    let items = [];
+
+    if (Array.isArray(req.body.items) && req.body.items.length) {
+      // Modo actual: lote de items.
+      items = req.body.items;
+    } else if (req.body && (req.body.productoId || req.body.codigo)) {
+      // Nuevo modo: un solo item, ya sea por productoId o por código.
+      items = [{
+        productoId: req.body.productoId,
+        codigo: req.body.codigo,
+        cantidad: req.body.cantidad,
+      }];
+    }
+
+    if (!items.length) {
+      return res.status(400).json({ error: 'Debe enviar items[] o un objeto con productoId/codigo y cantidad' });
+    }
+
     const clienteId = getClienteId(req);
     const agregados = [];
     const errores = [];
 
     for (const it of items) {
-      const productoId = it.productoId;
+      let productoId = it.productoId;
       const cantidad = Math.max(1, parseInt(it.cantidad, 10) || 1);
+
+      // Si no viene productoId pero sí un código, buscamos un producto disponible para ese código.
+      if (!productoId && it.codigo) {
+        const codigo = String(it.codigo).trim();
+        if (!codigo) {
+          errores.push({ codigo: it.codigo, error: 'codigo vacío' });
+          continue;
+        }
+        const candidatos = await Producto.find({ codigo, existencia: { $gt: 0 } });
+        if (!candidatos.length) {
+          errores.push({ codigo, error: 'No hay productos disponibles para este código' });
+          continue;
+        }
+        // Elegimos el más barato disponible.
+        let mejor = candidatos[0];
+        let mejorPrecio = getPrecioConPorcentaje(mejor);
+        for (const p of candidatos) {
+          const precio = getPrecioConPorcentaje(p);
+          if (precio < mejorPrecio) {
+            mejor = p;
+            mejorPrecio = precio;
+          }
+        }
+        productoId = mejor._id.toString();
+      }
+
       if (!productoId || !mongoose.Types.ObjectId.isValid(productoId)) {
-        errores.push({ productoId, error: 'productoId inválido' });
+        errores.push({ productoId, codigo: it.codigo, error: 'productoId inválido' });
         continue;
       }
+
       const producto = await Producto.findById(productoId);
       if (!producto || producto.existencia < cantidad) {
         errores.push({ productoId, error: 'Producto no disponible o sin stock suficiente' });
