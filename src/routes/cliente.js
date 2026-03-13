@@ -637,7 +637,8 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
       return res.status(500).json({ error: 'No se pudo analizar la imagen' });
     }
 
-    const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // Usamos un modelo estable soportado por la API actual.
+    const model = geminiClient.getGenerativeModel({ model: 'gemini-1.0-pro' });
 
     // Leer el archivo desde disco y convertir a base64
     const filePath = req.file.path;

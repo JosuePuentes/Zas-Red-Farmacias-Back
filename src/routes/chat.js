@@ -25,7 +25,8 @@ router.post('/', auth, async (req, res) => {
   res.setHeader('Transfer-Encoding', 'chunked');
 
   try {
-    const model = geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // Usamos un modelo estable soportado por la API actual.
+    const model = geminiClient.getGenerativeModel({ model: 'gemini-1.0-pro' });
 
     const systemInstruction = [
       'Eres Dona, auxiliar de confianza de una red de farmacias llamada Zas!.',
