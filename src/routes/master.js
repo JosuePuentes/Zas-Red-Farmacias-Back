@@ -115,10 +115,45 @@ router.post('/farmacias',
 );
 
 // Listar solicitudes de delivery pendientes
+// Devuelve SolicitudDeliveryMaster[] con:
+// {
+//   _id,
+//   tipoVehiculo,
+//   cedula,
+//   nombresCompletos,
+//   direccion,
+//   telefono,
+//   correo,
+//   numeroLicencia,
+//   matriculaVehiculo?,
+//   estado,
+//   fotoLicenciaUrl?,
+//   carnetCirculacionUrl?,
+//   fotoCarnetUrl?,
+//   fotoVehiculoUrl?,
+// }
 router.get('/solicitudes-delivery', async (req, res) => {
   try {
     const list = await SolicitudDelivery.find({ estado: 'pendiente' }).sort({ createdAt: -1 });
-    res.json(list);
+
+    const mapped = list.map((s) => ({
+      _id: s._id,
+      tipoVehiculo: s.tipoVehiculo,
+      cedula: s.cedula,
+      nombresCompletos: s.nombreCompleto,
+      direccion: s.direccion,
+      telefono: s.telefono,
+      correo: s.correo,
+      numeroLicencia: s.numeroLicencia,
+      matriculaVehiculo: s.matriculaVehiculo,
+      estado: s.estado,
+      fotoLicenciaUrl: s.fotoLicenciaUrl || null,
+      carnetCirculacionUrl: s.carnetCirculacionUrl || null,
+      fotoCarnetUrl: s.fotoCarnetUrl || null,
+      fotoVehiculoUrl: s.fotoVehiculoUrl || null,
+    }));
+
+    res.json(mapped);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar solicitudes' });
