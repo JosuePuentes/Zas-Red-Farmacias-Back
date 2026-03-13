@@ -55,6 +55,49 @@ router.patch('/ubicacion',
   }
 );
 
+// Estado + ubicación del delivery (para frontend móvil):
+// POST /api/delivery/estado
+// Body: { "activo": boolean, "lat"?: number, "lng"?: number }
+router.post('/estado',
+  body('activo').isBoolean(),
+  body('lat').optional().isFloat(),
+  body('lng').optional().isFloat(),
+  async (req, res) => {
+    try {
+      const err = validationResult(req);
+      if (!err.isEmpty()) {
+        return res.status(400).json({ error: 'Datos inválidos', details: err.array() });
+      }
+
+      const deliveryId = getDeliveryId(req);
+      const update = {
+        activoRecepcionPedidos: !!req.body.activo,
+      };
+
+      const lat = req.body.lat;
+      const lng = req.body.lng;
+      if (lat !== null && lat !== undefined && Number.isFinite(Number(lat))) {
+        update.ultimaLat = Number(lat);
+      }
+      if (lng !== null && lng !== undefined && Number.isFinite(Number(lng))) {
+        update.ultimaLng = Number(lng);
+      }
+
+      await User.updateOne({ _id: deliveryId }, update);
+
+      res.json({
+        ok: true,
+        activo: !!req.body.activo,
+        lat: update.ultimaLat ?? null,
+        lng: update.ultimaLng ?? null,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al actualizar estado de delivery' });
+    }
+  }
+);
+
 // Activar/desactivar recepción de pedidos
 router.patch('/activo', body('activo').isBoolean(), async (req, res) => {
   try {

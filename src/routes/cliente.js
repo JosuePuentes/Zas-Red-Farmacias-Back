@@ -967,18 +967,40 @@ router.post('/checkout/procesar',
 );
 
 // Actualizar ubicación (GPS) del cliente
-router.patch('/ubicacion', body('lat').isFloat(), body('lng').isFloat(), async (req, res) => {
-  try {
-    await User.updateOne(
-      { _id: getClienteId(req) },
-      { ultimaLat: req.body.lat, ultimaLng: req.body.lng }
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error al actualizar ubicación' });
+// Body: { lat: number | null, lng: number | null }
+// Si vienen null o faltan, se ignoran (no rompe).
+router.patch('/ubicacion',
+  body('lat').optional().isFloat(),
+  body('lng').optional().isFloat(),
+  async (req, res) => {
+    try {
+      const update = {};
+      const lat = req.body.lat;
+      const lng = req.body.lng;
+
+      if (lat !== null && lat !== undefined && Number.isFinite(Number(lat))) {
+        update.ultimaLat = Number(lat);
+      }
+      if (lng !== null && lng !== undefined && Number.isFinite(Number(lng))) {
+        update.ultimaLng = Number(lng);
+      }
+
+      if (Object.keys(update).length === 0) {
+        // Nada que actualizar, pero respondemos ok para no romper el flujo del frontend.
+        return res.json({ ok: true });
+      }
+
+      await User.updateOne(
+        { _id: getClienteId(req) },
+        update
+      );
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al actualizar ubicación' });
+    }
   }
-});
+);
 
 // Mis pedidos (incluye etaEntrega y posición del delivery para seguimiento sencillo)
 router.get('/mis-pedidos', async (req, res) => {
