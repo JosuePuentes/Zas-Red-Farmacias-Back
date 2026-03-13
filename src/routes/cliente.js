@@ -619,7 +619,15 @@ router.get('/recetas/buscar', async (req, res) => {
 
 // POST /api/cliente/recetas/analizar-imagen
 // Body: multipart/form-data con campo de archivo "file"
-// Respuesta: { medicamento, dosis, cantidad, es_recipe }
+// Respuesta principal (nuevo contrato):
+// {
+//   medicamentos: [
+//     { nombre: string, concentracion: string, dosis: string, cantidad_total: number }
+//   ],
+//   es_recipe_valido: boolean
+// }
+// Para compatibilidad hacia atrás, también incluye:
+// { medicamento, dosis, cantidad, es_recipe } usando el primer medicamento de la lista.
 router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -643,11 +651,11 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
     }
 
     const prompt = [
-      'Eres un asistente de farmacia en Zulia, Venezuela. Tu tarea es analizar este récipe médico.',
-      'Extrae el nombre del medicamento, la concentración y la cantidad.',
-      'Responde EXCLUSIVAMENTE en un objeto JSON con este formato:',
-      '{ "medicamento": string, "dosis": string, "cantidad": string, "es_recipe": boolean }.',
-      'Si la imagen no parece un récipe médico, pon es_recipe en false.',
+      'Actúa como un farmacéutico experto.',
+      'Analiza la imagen de este récipe médico y extrae la información en el siguiente formato JSON estrictamente:',
+      "{ 'medicamentos': [ { 'nombre': '', 'concentracion': '', 'dosis': '', 'cantidad_total': 0 } ], 'es_recipe_valido': true/false }.",
+      'Si el texto es ilegible, devuelve el campo vacío.',
+      'No añadas texto explicativo, solo el JSON.',
     ].join(' ');
 
     let text;
@@ -680,6 +688,8 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
 
     if (!parsed || typeof parsed !== 'object') {
       return res.json({
+        medicamentos: [],
+        es_recipe_valido: false,
         medicamento: '',
         dosis: '',
         cantidad: '',
@@ -687,14 +697,35 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
       });
     }
 
-    const out = {
-      medicamento: typeof parsed.medicamento === 'string' ? parsed.medicamento : '',
-      dosis: typeof parsed.dosis === 'string' ? parsed.dosis : '',
-      cantidad: typeof parsed.cantidad === 'string' ? parsed.cantidad : '',
-      es_recipe: Boolean(parsed.es_recipe),
+    // Normalizar array de medicamentos
+    const medsSource = Array.isArray(parsed.medicamentos) ? parsed.medicamentos : [];
+    const medicamentos = medsSource.map((m) => ({
+      nombre: typeof m?.nombre === 'string' ? m.nombre : '',
+      concentracion: typeof m?.concentracion === 'string' ? m.concentracion : '',
+      dosis: typeof m?.dosis === 'string' ? m.dosis : '',
+      cantidad_total: Number.isFinite(Number(m?.cantidad_total)) ? Number(m.cantidad_total) : 0,
+    })).filter((m) => m.nombre || m.concentracion || m.dosis || m.cantidad_total > 0);
+
+    const esRecipeValido = typeof parsed.es_recipe_valido === 'boolean'
+      ? parsed.es_recipe_valido
+      : Boolean(parsed.es_recipe);
+
+    const first = medicamentos[0] || {
+      nombre: '',
+      concentracion: '',
+      dosis: '',
+      cantidad_total: 0,
     };
 
-    return res.json(out);
+    return res.json({
+      medicamentos,
+      es_recipe_valido: esRecipeValido,
+      // Campos legacy para compatibilidad con frontend antiguo
+      medicamento: first.nombre,
+      dosis: first.concentracion || first.dosis,
+      cantidad: first.cantidad_total ? String(first.cantidad_total) : '',
+      es_recipe: esRecipeValido,
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'No se pudo analizar la imagen' });
