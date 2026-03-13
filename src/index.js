@@ -21,6 +21,7 @@ import solicitudDeliveryRoutes from './routes/solicitudDelivery.js';
 import solicitudFarmaciaRoutes from './routes/solicitudFarmacia.js';
 import notificacionesRoutes from './routes/notificaciones.js';
 import configRoutes from './routes/config.js';
+import chatRoutes from './routes/chat.js';
 
 const app = express();
 app.use(cors());
@@ -43,6 +44,7 @@ app.use('/api/solicitud-delivery', solicitudDeliveryRoutes);
 app.use('/api/solicitud-farmacia', solicitudFarmaciaRoutes);
 app.use('/api/notificaciones', notificacionesRoutes);
 app.use('/api/config', configRoutes);
+app.use('/api/chat', chatRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
