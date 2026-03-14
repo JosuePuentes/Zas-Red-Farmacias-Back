@@ -640,7 +640,7 @@ router.post('/recetas/analizar-imagen', uploadMemory.single('file'), async (req,
       return res.status(500).json({ error: ERROR_ANALISIS });
     }
 
-    const model = geminiClient.getGenerativeModel({ model: 'gemini-1.0-pro' });
+    const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     // Usar buffer en memoria (evita disco en Render y fallos de path)
     const base64 = req.file.buffer.toString('base64');

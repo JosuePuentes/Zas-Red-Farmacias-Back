@@ -22,11 +22,9 @@ router.post('/', auth, async (req, res) => {
     : (req.user?.nombre || 'cliente');
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Transfer-Encoding', 'chunked');
 
   try {
-    // Usamos un modelo estable soportado por la API actual.
-    const model = geminiClient.getGenerativeModel({ model: 'gemini-1.0-pro' });
+    const model = geminiClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const systemInstruction = [
       'Eres Dona, auxiliar de confianza de una red de farmacias llamada Zas!.',
@@ -45,30 +43,19 @@ router.post('/', auth, async (req, res) => {
       'Sin más datos técnicos. El resto del mensaje debe ser natural.',
     ].join('\n');
 
-    const history = messages.map((m) => ({
-      role: m.role === 'user' ? 'user' : 'model',
-      parts: [{ text: String(m.content ?? '') }],
-    }));
-
-    const chat = model.startChat({
-      history: [
-        {
-          role: 'user',
-          parts: [{ text: systemInstruction }],
-        },
-        ...history,
-      ],
-    });
-
-    const stream = await chat.sendMessageStream('Responde al último mensaje del usuario.');
-
-    for await (const chunk of stream.stream) {
-      const text = chunk.text();
-      if (text) {
-        res.write(text);
-      }
+    // Construir prompt único (evita sendMessageStream que puede no estar soportado en 1.0-pro)
+    const parts = [`[Instrucción de sistema]\n${systemInstruction}\n\n[Conversación]\n`];
+    for (const m of messages) {
+      const role = m.role === 'user' ? 'Usuario' : 'Dona';
+      parts.push(`${role}: ${String(m.content ?? '').trim()}\n`);
     }
+    parts.push('Dona: ');
+    const prompt = parts.join('');
 
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
+
+    res.write(text || '');
     res.end();
   } catch (err) {
     console.error('Error en /api/chat', err);
