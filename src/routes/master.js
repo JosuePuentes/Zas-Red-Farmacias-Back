@@ -58,6 +58,19 @@ router.get('/usuarios', async (req, res) => {
   }
 });
 
+// Listar repartidores (usuarios con role delivery) para el panel master
+router.get('/delivery', async (req, res) => {
+  try {
+    const list = await User.find({ role: 'delivery' })
+      .select('-password')
+      .sort({ nombre: 1, createdAt: -1 });
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar repartidores' });
+  }
+});
+
 // Crear farmacia + usuario de farmacia (maestro crea usuario farmacia)
 router.post('/farmacias',
   body('email').isEmail().normalizeEmail(),
