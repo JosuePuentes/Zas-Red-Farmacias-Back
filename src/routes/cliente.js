@@ -653,8 +653,9 @@ router.post('/recetas/analizar-imagen', uploadMemory.single('file'), async (req,
     const prompt = [
       'Actúa como un farmacéutico experto.',
       'Analiza la imagen de este récipe médico y extrae la información en el siguiente formato JSON estrictamente:',
-      "{ 'medicamentos': [ { 'nombre': '', 'concentracion': '', 'dosis': '', 'cantidad_total': 0 } ], 'es_recipe_valido': true/false }.",
-      'Si el texto es ilegible, devuelve el campo vacío.',
+      "{ 'medicamentos': [ { 'nombre': '', 'concentracion': '', 'dosis': '', 'cantidad_total': 0 } ], 'es_recipe_valido': true/false, 'texto_receta': '' }.",
+      "En 'texto_receta' incluye el texto completo que logras leer en la imagen (OCR), tal cual, en un solo string. Si no se puede leer, usa string vacío.",
+      'Si el texto es ilegible, devuelve los campos vacíos.',
       'No añadas texto explicativo, solo el JSON.',
     ].join(' ');
 
@@ -711,9 +712,12 @@ router.post('/recetas/analizar-imagen', uploadMemory.single('file'), async (req,
       cantidad_total: 0,
     };
 
+    const textoReceta = typeof parsed.texto_receta === 'string' ? parsed.texto_receta.trim() : '';
+
     return res.json({
       medicamentos,
       es_recipe_valido: esRecipeValido,
+      texto_receta: textoReceta,
       medicamento: first.nombre,
       dosis: first.concentracion || first.dosis,
       cantidad: first.cantidad_total ? String(first.cantidad_total) : '',

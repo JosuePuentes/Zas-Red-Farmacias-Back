@@ -37,6 +37,7 @@ if (fs.existsSync(publicDir)) {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/master', masterRoutes);
+app.use('/api/admin', masterRoutes);
 app.use('/api/farmacia', farmaciaRoutes);
 app.use('/api/farmacias', farmaciasRoutes);
 app.use('/api/cliente', clienteRoutes);

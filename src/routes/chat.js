@@ -102,15 +102,19 @@ router.post('/', auth, async (req, res) => {
       existencia: productData.existencia,
     } : undefined;
 
+    const messageWithProducts = responseProduct
+      ? text + '\n__PRODUCTOS__\n' + JSON.stringify(responseProduct)
+      : text;
+
     const toSave = [
       ...messages.map((m) => ({ role: m.role, content: m.content || '', product: undefined })),
-      { role: 'assistant', content: text, product: responseProduct },
+      { role: 'assistant', content: messageWithProducts, product: responseProduct },
     ];
     await ConversacionDona.appendMessages(req.userId, toSave);
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.json({
-      message: text,
+      message: messageWithProducts,
       product: responseProduct || undefined,
     });
   } catch (err) {

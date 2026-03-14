@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { body, validationResult } from 'express-validator';
 import User from '../models/User.js';
 import Farmacia from '../models/Farmacia.js';
@@ -10,8 +13,41 @@ import { auth, requireRole } from '../middleware/auth.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
 
 const router = Router();
+const __dirnameMaster = path.dirname(fileURLToPath(import.meta.url));
+const uploadDir = process.env.UPLOAD_DIR || path.join(__dirnameMaster, '../../uploads');
 
 router.use(auth, requireRole('master'));
+
+// GET /documento-imagen?path=uploads/archivo.jpeg — sirve archivos de uploads solo para admin (evita CORS en panel)
+router.get('/documento-imagen', (req, res) => {
+  try {
+    const rawPath = (req.query.path && String(req.query.path).trim()) || '';
+    if (!rawPath || rawPath.includes('..')) {
+      return res.status(400).json({ error: 'path inválido' });
+    }
+    const normalized = path.normalize(rawPath).replace(/^\//, '');
+    if (normalized !== 'uploads' && !normalized.startsWith('uploads/')) {
+      return res.status(400).json({ error: 'Solo se permiten rutas bajo uploads/' });
+    }
+    const relative = normalized === 'uploads' ? '' : normalized.replace(/^uploads\/?/, '');
+    const fullPath = path.join(uploadDir, relative);
+    const resolved = path.resolve(fullPath);
+    const baseResolved = path.resolve(uploadDir);
+    if (resolved !== baseResolved && !resolved.startsWith(baseResolved + path.sep)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      return res.status(404).json({ error: 'Archivo no encontrado' });
+    }
+    const ext = path.extname(resolved).toLowerCase();
+    const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' }[ext] || 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.sendFile(resolved);
+  } catch (e) {
+    console.error('documento-imagen', e);
+    res.status(500).json({ error: 'Error al servir el archivo' });
+  }
+});
 
 // Listar todas las farmacias (para que master elija "entrar como" una farmacia)
 router.get('/farmacias', async (req, res) => {
