@@ -17,3 +17,9 @@ export const upload = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
+
+// Para endpoints que no deben depender del disco (ej. Render sin persistencia)
+export const uploadMemory = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});

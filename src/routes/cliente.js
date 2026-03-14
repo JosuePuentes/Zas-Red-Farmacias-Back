@@ -11,7 +11,7 @@ import RecordatorioMedicamento from '../models/RecordatorioMedicamento.js';
 import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
 import User from '../models/User.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
-import { upload } from '../middleware/upload.js';
+import { upload, uploadMemory } from '../middleware/upload.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -625,7 +625,7 @@ router.get('/recetas/buscar', async (req, res) => {
 const MIME_IMAGEN = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const ERROR_ANALISIS = 'Error al analizar la imagen. Intenta de nuevo.';
 
-router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) => {
+router.post('/recetas/analizar-imagen', uploadMemory.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Falta la imagen del récipe.' });
@@ -642,15 +642,8 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
 
     const model = geminiClient.getGenerativeModel({ model: 'gemini-1.0-pro' });
 
-    const filePath = req.file.path;
-    let base64;
-    try {
-      const buffer = await fs.readFile(filePath);
-      base64 = buffer.toString('base64');
-    } catch (err) {
-      console.error('Error leyendo archivo de receta:', err);
-      return res.status(500).json({ error: ERROR_ANALISIS });
-    }
+    // Usar buffer en memoria (evita disco en Render y fallos de path)
+    const base64 = req.file.buffer.toString('base64');
 
     const prompt = [
       'Actúa como un farmacéutico experto.',
