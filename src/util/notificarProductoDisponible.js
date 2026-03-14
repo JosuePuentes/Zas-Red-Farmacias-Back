@@ -15,7 +15,7 @@ export async function notificarClientesProductoDisponible(codigo) {
     await Notificacion.create({
       userId: cid,
       tipo: 'producto_solicitado_disponible',
-      mensaje: `Uno de los productos que solicitaste ya está disponible: "${descripcion}". Precio desde $${Number(precioRef).toFixed(2)}.`,
+      mensaje: `Dona: ¡Buenas noticias! Uno de los productos que pediste ya está disponible: "${descripcion}" desde $${Number(precioRef).toFixed(2)}. Pásate cuando quieras.`,
     });
   }
   if (solicitudes.length) {

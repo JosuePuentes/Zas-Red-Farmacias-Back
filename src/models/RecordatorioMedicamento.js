@@ -13,6 +13,12 @@ const recordatorioMedicamentoSchema = new mongoose.Schema({
   fechaEstimadaFin: { type: Date, required: true },
   notificadoFinProximo: { type: Boolean, default: false },
   activo: { type: Boolean, default: true },
+  // Hora del día para notificación (ej. "14:00" para 2:00pm)
+  hora: { type: String, default: null },
+  // Días de la semana: [0,1,2,3,4,5,6] (domingo=0). Si null/empty = todos los días
+  dias: [{ type: Number, min: 0, max: 6 }],
+  // Para no repetir notificación por hora el mismo día
+  ultimaNotificacionHoraFecha: { type: Date },
 }, { timestamps: true });
 
 recordatorioMedicamentoSchema.index({ clienteId: 1, activo: 1 });

@@ -396,7 +396,7 @@ router.get('/recordatorios', async (req, res) => {
         await Notificacion.create({
           userId: clienteId,
           tipo: 'recordatorio_quedapoco',
-          mensaje: `Te queda poco de "${rec.descripcion}". Se estima que se te acabe en 2 días o menos. Gestiona tu compra.`,
+          mensaje: `Dona: Recuerda que solo te queda tratamiento para unos dos días de "${rec.descripcion}". Cuando quieras, podemos hacer otra compra. ¡Estoy aquí para ayudarte!`,
           recordatorioId: rec._id,
         });
       }
@@ -410,10 +410,10 @@ router.get('/recordatorios', async (req, res) => {
   }
 });
 
-// POST /api/cliente/recordatorios — agregar medicamento (desde catálogo o manual). Body: codigo, descripcion, imagen?, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia?
+// POST /api/cliente/recordatorios — agregar medicamento. Body: codigo, descripcion, imagen?, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia?, hora?, dias?
 router.post('/recordatorios', async (req, res) => {
   try {
-    const { codigo, descripcion, imagen, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia } = req.body;
+    const { codigo, descripcion, imagen, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia, hora, dias } = req.body;
     if (!codigo || !descripcion || !fechaCompra || cantidadInicial == null || cantidadPorToma == null || intervaloHoras == null) {
       return res.status(400).json({ error: 'Faltan campos: codigo, descripcion, fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras' });
     }
@@ -423,6 +423,7 @@ router.post('/recordatorios', async (req, res) => {
     const cantToma = Number(cantidadPorToma) || 1;
     const intervalo = Number(intervaloHoras) || 8;
     const fechaFin = calcularFechaFin(fecha, cantInicial, cantToma, intervalo);
+    const diasNorm = Array.isArray(dias) ? dias.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : undefined;
 
     const rec = await RecordatorioMedicamento.create({
       clienteId: getClienteId(req),
@@ -436,6 +437,8 @@ router.post('/recordatorios', async (req, res) => {
       precioReferencia: precioReferencia != null ? Number(precioReferencia) : undefined,
       fechaEstimadaFin: fechaFin,
       activo: true,
+      hora: hora != null && String(hora).trim() ? String(hora).trim() : undefined,
+      dias: diasNorm && diasNorm.length ? diasNorm : undefined,
     });
     res.status(201).json(rec);
   } catch (e) {
@@ -449,13 +452,15 @@ router.patch('/recordatorios/:id', async (req, res) => {
   try {
     const rec = await RecordatorioMedicamento.findOne({ _id: req.params.id, clienteId: getClienteId(req) });
     if (!rec) return res.status(404).json({ error: 'Recordatorio no encontrado' });
-    const { fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia, activo } = req.body;
+    const { fechaCompra, cantidadInicial, cantidadPorToma, intervaloHoras, precioReferencia, activo, hora, dias } = req.body;
     if (fechaCompra != null) rec.fechaCompra = new Date(fechaCompra);
     if (cantidadInicial != null) rec.cantidadInicial = Number(cantidadInicial) || 1;
     if (cantidadPorToma != null) rec.cantidadPorToma = Number(cantidadPorToma) || 1;
     if (intervaloHoras != null) rec.intervaloHoras = Number(intervaloHoras) || 8;
     if (precioReferencia !== undefined) rec.precioReferencia = precioReferencia != null ? Number(precioReferencia) : undefined;
     if (typeof activo === 'boolean') rec.activo = activo;
+    if (hora !== undefined) rec.hora = hora != null && String(hora).trim() ? String(hora).trim() : null;
+    if (dias !== undefined) rec.dias = Array.isArray(dias) ? dias.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : rec.dias;
     rec.fechaEstimadaFin = calcularFechaFin(rec.fechaCompra, rec.cantidadInicial, rec.cantidadPorToma, rec.intervaloHoras);
     await rec.save();
     res.json(rec);

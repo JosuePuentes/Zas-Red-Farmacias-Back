@@ -391,7 +391,7 @@ router.post('/pedidos/:id/validar', async (req, res) => {
     await Notificacion.create({
       userId: pedido.clienteId,
       tipo: 'pedido_validado',
-      mensaje: 'Tu pedido ha sido validado por la farmacia.',
+      mensaje: 'Dona: Tu pedido ya fue validado por la farmacia. En breve un repartidor lo tomará. Te aviso.',
       pedidoId: pedido._id,
     });
 
@@ -418,7 +418,7 @@ router.post('/pedidos/:id/denegar', async (req, res) => {
     await Notificacion.create({
       userId: pedido.clienteId,
       tipo: 'pedido_denegado',
-      mensaje: 'Tu pedido fue denegado por la farmacia.',
+      mensaje: 'Dona: Lamentablemente la farmacia no pudo procesar tu pedido esta vez. Si quieres, puedo ayudarte a buscar otra opción.',
       pedidoId: pedido._id,
     });
 

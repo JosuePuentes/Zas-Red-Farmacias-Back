@@ -222,7 +222,7 @@ router.post('/pedidos/:id/aceptar', async (req, res) => {
     await Notificacion.create({
       userId: pedido.clienteId._id,
       tipo: 'pedido_asignado',
-      mensaje: 'Un repartidor ha aceptado tu pedido.',
+      mensaje: 'Dona: ¡Buenas noticias! Un repartidor ya tomó tu pedido y va en camino. Te aviso cuando esté por llegar.',
       pedidoId: pedido._id,
     });
 
@@ -299,7 +299,7 @@ router.patch('/pedidos/:id/estado',
         await Notificacion.create({
           userId: pedido.clienteId,
           tipo: 'pedido_entregado',
-          mensaje: 'Tu pedido ha sido entregado.',
+          mensaje: 'Dona: Tu pedido ya fue entregado. Gracias por confiar en Zas!. Cualquier cosa, aquí estoy.',
           pedidoId: pedido._id,
         });
       }
@@ -349,7 +349,7 @@ router.post('/pedidos/:id/entregar', async (req, res) => {
     await Notificacion.create({
       userId: pedido.clienteId,
       tipo: 'pedido_entregado',
-      mensaje: 'Tu pedido ha sido entregado.',
+      mensaje: 'Dona: Tu pedido ya fue entregado. Gracias por confiar en Zas!. Cualquier cosa, aquí estoy.',
       pedidoId: pedido._id,
     });
 

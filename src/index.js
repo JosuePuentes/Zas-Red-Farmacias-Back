@@ -22,6 +22,7 @@ import solicitudFarmaciaRoutes from './routes/solicitudFarmacia.js';
 import notificacionesRoutes from './routes/notificaciones.js';
 import configRoutes from './routes/config.js';
 import chatRoutes from './routes/chat.js';
+import cronRoutes from './routes/cron.js';
 
 const app = express();
 app.use(cors());
@@ -45,6 +46,7 @@ app.use('/api/solicitud-farmacia', solicitudFarmaciaRoutes);
 app.use('/api/notificaciones', notificacionesRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/cron', cronRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
