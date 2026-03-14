@@ -618,29 +618,30 @@ router.get('/recetas/buscar', async (req, res) => {
 });
 
 // POST /api/cliente/recetas/analizar-imagen
-// Body: multipart/form-data con campo de archivo "file"
-// Respuesta principal (nuevo contrato):
-// {
-//   medicamentos: [
-//     { nombre: string, concentracion: string, dosis: string, cantidad_total: number }
-//   ],
-//   es_recipe_valido: boolean
-// }
-// Para compatibilidad hacia atrás, también incluye:
-// { medicamento, dosis, cantidad, es_recipe } usando el primer medicamento de la lista.
+// Body: multipart/form-data, campo "file" (JPEG, PNG, WebP; máx 10 MB).
+// 200: { medicamentos: [...], es_recipe_valido, medicamento, dosis, cantidad, es_recipe }
+// 400: { error: "..." } (falta archivo, formato inválido, imagen ilegible)
+// 500: { error: "Error al analizar la imagen. Intenta de nuevo." }
+const MIME_IMAGEN = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const ERROR_ANALISIS = 'Error al analizar la imagen. Intenta de nuevo.';
+
 router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Falta la imagen del récipe.' });
     }
+    const mime = (req.file.mimetype || '').toLowerCase();
+    if (!MIME_IMAGEN.includes(mime)) {
+      return res.status(400).json({
+        error: 'Formato de imagen no válido. Usa JPEG, PNG o WebP.',
+      });
+    }
     if (!geminiClient || !GEMINI_API_KEY) {
-      return res.status(500).json({ error: 'No se pudo analizar la imagen' });
+      return res.status(500).json({ error: ERROR_ANALISIS });
     }
 
-    // Usamos un modelo estable soportado por la API actual.
     const model = geminiClient.getGenerativeModel({ model: 'gemini-1.0-pro' });
 
-    // Leer el archivo desde disco y convertir a base64
     const filePath = req.file.path;
     let base64;
     try {
@@ -648,7 +649,7 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
       base64 = buffer.toString('base64');
     } catch (err) {
       console.error('Error leyendo archivo de receta:', err);
-      return res.status(500).json({ error: 'No se pudo analizar la imagen' });
+      return res.status(500).json({ error: ERROR_ANALISIS });
     }
 
     const prompt = [
@@ -673,7 +674,7 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
       text = result.response.text().trim();
     } catch (err) {
       console.error('Error llamando a Gemini:', err);
-      return res.status(500).json({ error: 'No se pudo analizar la imagen' });
+      return res.status(500).json({ error: ERROR_ANALISIS });
     }
 
     let parsed = null;
@@ -688,17 +689,11 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
     }
 
     if (!parsed || typeof parsed !== 'object') {
-      return res.json({
-        medicamentos: [],
-        es_recipe_valido: false,
-        medicamento: '',
-        dosis: '',
-        cantidad: '',
-        es_recipe: false,
+      return res.status(400).json({
+        error: 'No se pudo leer la imagen. Prueba con una foto más nítida.',
       });
     }
 
-    // Normalizar array de medicamentos
     const medsSource = Array.isArray(parsed.medicamentos) ? parsed.medicamentos : [];
     const medicamentos = medsSource.map((m) => ({
       nombre: typeof m?.nombre === 'string' ? m.nombre : '',
@@ -721,7 +716,6 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
     return res.json({
       medicamentos,
       es_recipe_valido: esRecipeValido,
-      // Campos legacy para compatibilidad con frontend antiguo
       medicamento: first.nombre,
       dosis: first.concentracion || first.dosis,
       cantidad: first.cantidad_total ? String(first.cantidad_total) : '',
@@ -729,7 +723,7 @@ router.post('/recetas/analizar-imagen', upload.single('file'), async (req, res) 
     });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'No se pudo analizar la imagen' });
+    res.status(500).json({ error: ERROR_ANALISIS });
   }
 });
 
