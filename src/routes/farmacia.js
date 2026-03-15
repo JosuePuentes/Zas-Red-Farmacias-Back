@@ -14,6 +14,7 @@ import SolicitudPlanPro from '../models/SolicitudPlanPro.js';
 import Proveedor from '../models/Proveedor.js';
 import PrecioProveedor from '../models/PrecioProveedor.js';
 import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
+import SolicitudProductoNoCatalogado from '../models/SolicitudProductoNoCatalogado.js';
 import { notificarClientesProductoDisponible } from '../util/notificarProductoDisponible.js';
 import { invalidarCacheInventarioMaster } from '../util/cacheInventarioMaster.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
@@ -785,6 +786,23 @@ router.get('/inventario', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener inventario' });
+  }
+});
+
+// GET /api/farmacia/solicitudes-no-catalogadas — solicitudes por nombre (productos no en catálogo), agrupado por nombre.
+router.get('/solicitudes-no-catalogadas', async (req, res) => {
+  try {
+    const list = await SolicitudProductoNoCatalogado.aggregate([
+      { $match: { nombre: { $exists: true, $ne: '' } } },
+      { $addFields: { nombreNorm: { $toLower: '$nombre' } } },
+      { $group: { _id: '$nombreNorm', cantidad: { $sum: 1 }, nombreDisplay: { $first: '$nombre' } } },
+      { $project: { nombre: '$nombreDisplay', cantidad: 1, _id: 0 } },
+      { $sort: { cantidad: -1 } },
+    ]);
+    res.json(list);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar solicitudes no catalogadas' });
   }
 });
 

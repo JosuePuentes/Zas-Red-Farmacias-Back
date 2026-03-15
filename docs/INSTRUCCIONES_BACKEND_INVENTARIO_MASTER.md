@@ -55,18 +55,32 @@ Este flujo debe ejecutarse siempre que se **actualice o cargue inventario** (por
 
 ---
 
+## 5. Solicitudes no catalogadas y solicitar por nombre
+
+- **POST /api/cliente/solicitar-producto-por-nombre** (cliente logueado): body `{ "nombre": "<nombre del producto>" }`. Guarda la solicitud en una colección/tabla de **solicitudes no catalogadas** (productos que el cliente pide por nombre cuando no están en catálogo). Límite opcional: una vez cada 7 días por cliente/nombre (respuesta 400 con `proximaDisponible` si aplica).
+- **GET /api/master/solicitudes-no-catalogadas** (solo admin): devuelve `[{ nombre, cantidad }]` agrupado por nombre (cantidad de solicitudes por cada nombre).
+- **GET /api/farmacia/solicitudes-no-catalogadas** (farmacia): devuelve `[{ nombre, cantidad }]` agrupado por nombre.
+
+En el chat de Dona, cuando se recomienda un medicamento que **no está en catálogo**, se envía en `__PRODUCTOS__` un objeto con **descripcion** (nombre) y **sin codigo**, **disponible: false**, para que el frontend muestre “Solicitar” y llame a solicitar por nombre.
+
+---
+
 ## Resumen de endpoints
 
 | Método | Ruta | Rol | Descripción |
 |--------|------|-----|-------------|
 | GET | `/api/master/inventario` | admin (master) | Query: `page`, `page_size`. Respuesta: `{ items, total }`. Inventario agregado por código. |
 | GET | `/api/master/inventario/solicitudes-detalle` | admin (master) | Query: `codigo`. Detalle de quién solicitó ese producto (para expandir fila). |
+| GET | `/api/master/solicitudes-no-catalogadas` | admin (master) | Lista `[{ nombre, cantidad }]` agrupado por nombre (solicitudes por nombre, no catalogados). |
+| GET | `/api/farmacia/solicitudes-no-catalogadas` | farmacia | Lista `[{ nombre, cantidad }]` agrupado por nombre (solicitudes no catalogadas). |
 | POST | `/api/cliente/solicitar-producto` | cliente | Registrar solicitud de producto por código; límite 7 días por cliente/código; opcional `proximaDisponible` en 400. |
+| POST | `/api/cliente/solicitar-producto-por-nombre` | cliente | Body: `{ nombre }`. Registrar solicitud por nombre (producto no en catálogo); límite 7 días por cliente/nombre. |
 
 ---
 
 ## Modelos relacionados
 
 - **SolicitudProductoCliente:** `clienteId`, `codigo`, `notificadoEnDisponible` (fecha o null).
+- **SolicitudProductoNoCatalogado:** `clienteId`, `nombre` (string), para solicitudes por nombre cuando el producto no está en catálogo.
 - **Producto:** inventario por farmacia (`farmaciaId`, `codigo`, `existencia`, `categoria`, etc.).
 - **Notificacion:** para enviar al usuario el aviso de producto disponible.

@@ -70,7 +70,17 @@ export async function buscarProductoParaChat(query) {
         existencia: 0,
       }];
     }
-    return [];
+    // No está en catálogo: producto "no catalogado" por nombre para que el frontend muestre "Solicitar" y llame a solicitar-producto-por-nombre.
+    return [{
+      id: null,
+      codigo: null,
+      descripcion: q,
+      precio: 0,
+      imagen: null,
+      farmaciaId: null,
+      disponible: false,
+      existencia: 0,
+    }];
   }
 
   const conStock = productos.filter((p) => (p.existencia ?? 0) > 0);

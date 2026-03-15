@@ -41,11 +41,19 @@ function buildPrompt(userName, messages, productData) {
       );
     } else {
       const primero = productData[0];
-      parts.push(
-        `\n[Datos de producto para esta respuesta]\n`,
-        `El producto "${primero.descripcion}" (código ${primero.codigo}) NO está disponible en este momento.`,
-        `Responde en tono Dona tipo: "Es el [nombre del medicamento] pero no tenemos disponible; puedes solicitarlo y te avisamos cuando llegue." No uses [ACCION:...].\n`
-      );
+      if (!primero.codigo) {
+        parts.push(
+          `\n[Datos de producto para esta respuesta]\n`,
+          `El producto "${primero.descripcion}" NO está en nuestro catálogo (es una solicitud por nombre).`,
+          `Responde en tono Dona: que no lo tenemos en catálogo pero puede solicitarlo por nombre y le avisamos si lo conseguimos. No uses [ACCION:...].\n`
+        );
+      } else {
+        parts.push(
+          `\n[Datos de producto para esta respuesta]\n`,
+          `El producto "${primero.descripcion}" (código ${primero.codigo}) NO está disponible en este momento.`,
+          `Responde en tono Dona tipo: "Es el [nombre del medicamento] pero no tenemos disponible; puedes solicitarlo y te avisamos cuando llegue." No uses [ACCION:...].\n`
+        );
+      }
     }
   }
   parts.push('\n[Conversación]\n');

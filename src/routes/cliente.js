@@ -9,6 +9,7 @@ import Pedido from '../models/Pedido.js';
 import Notificacion from '../models/Notificacion.js';
 import RecordatorioMedicamento from '../models/RecordatorioMedicamento.js';
 import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
+import SolicitudProductoNoCatalogado from '../models/SolicitudProductoNoCatalogado.js';
 import User from '../models/User.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload, uploadMemory } from '../middleware/upload.js';
@@ -515,6 +516,38 @@ router.post('/solicitar-producto', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al registrar solicitud' });
+  }
+});
+
+// --- Solicitar producto por nombre (no catalogado): guardar en solicitudes no catalogadas ---
+router.post('/solicitar-producto-por-nombre', async (req, res) => {
+  try {
+    const nombre = req.body.nombre != null ? String(req.body.nombre).trim() : '';
+    if (!nombre || nombre.length < 2) {
+      return res.status(400).json({ error: 'nombre requerido (mínimo 2 caracteres)' });
+    }
+    const clienteId = getClienteId(req);
+
+    const hace7Dias = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const ultimaSolicitud = await SolicitudProductoNoCatalogado.findOne({
+      clienteId,
+      nombre: new RegExp(`^${escapeRegex(nombre)}$`, 'i'),
+      createdAt: { $gte: hace7Dias },
+    }).sort({ createdAt: -1 });
+    if (ultimaSolicitud) {
+      const proximaFecha = new Date(ultimaSolicitud.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+      return res.status(400).json({
+        error: 'Ya solicitaste este producto por nombre recientemente. Podrás volver a solicitarlo en 7 días.',
+        proximaDisponible: proximaFecha,
+      });
+    }
+
+    await SolicitudProductoNoCatalogado.create({ clienteId, nombre });
+    res.status(201).json({ message: 'Solicitud registrada. Te avisaremos si lo conseguimos.' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al registrar solicitud por nombre' });
   }
 });
 

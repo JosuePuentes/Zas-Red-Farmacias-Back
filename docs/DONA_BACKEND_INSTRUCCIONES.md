@@ -7,13 +7,19 @@
 - **No** devolver texto tipo `[ACCION:CONSULTAR_PRECIO]` ni similares.
 - Ejecutar la consulta en backend (buscar producto en BD), obtener precio y datos, y que la IA responda en **texto natural** (ej. “Mira, el Paracetamol de 500mg lo tenemos en $2.50…”).
 
+### Comprobar inventario/catálogo
+
+- Dona debe comprobar siempre si el medicamento está en **inventario** o al menos en **catálogo**. Si no está en catálogo, recomendar **por nombre** y soportar **solicitud por nombre** (endpoint `POST /api/cliente/solicitar-producto-por-nombre` con body `{ nombre }`).
+
 ### Productos en el mensaje
 
 - Cada vez que Dona mencione un medicamento, añadir al final del mensaje: `\n__PRODUCTOS__\n` + **JSON array** con los productos.
 - Cada producto debe llevar: **id**, **codigo**, **descripcion**, **precio**, **imagen**, **farmaciaId**, **disponible** (boolean) y **existencia** (number).
+- **Formato para no catalogados:** si el producto **no está en catálogo**, enviar un objeto con **descripcion** (nombre) y **sin codigo** (o `codigo: null`), **disponible: false**, para que el frontend muestre “Solicitar” y llame a solicitar por nombre.
 - **Si hay stock:** mensaje tipo “Lo tenemos en $X, aquí te lo dejo para agregar al carrito” y producto con **disponible: true** (y existencia > 0).
-- **Si no hay stock:** mensaje tipo “Es el [medicamento] pero no tenemos disponible; puedes solicitarlo” y producto con **disponible: false** o **existencia: 0**.
-- Así el frontend puede mostrar la tarjeta con foto, el botón “Agregar al carrito” solo cuando haya stock y el botón “Solicitar” cuando no.
+- **Si no hay stock (pero sí en catálogo):** mensaje tipo “Es el [medicamento] pero no tenemos disponible; puedes solicitarlo” y producto con **disponible: false** o **existencia: 0**.
+- **Si no está en catálogo:** mensaje tipo “No lo tenemos en catálogo pero puedes solicitarlo por nombre y te avisamos si lo conseguimos”, y producto con **codigo** null y **disponible: false**.
+- Así el frontend puede mostrar la tarjeta con foto, el botón “Agregar al carrito” solo cuando haya stock y el botón “Solicitar” (por código o por nombre según corresponda).
 - La respuesta JSON del chat incluye además el array `product` en el body para uso directo.
 
 ### Historial por cliente
