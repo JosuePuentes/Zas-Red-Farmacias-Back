@@ -210,14 +210,20 @@ router.get('/solicitudes-no-catalogadas', async (req, res) => {
   }
 });
 
-// Listar todos los usuarios (para ver tipo: cliente, delivery, farmacia)
+// Listar todos los usuarios (para ver tipo: cliente, delivery, farmacia). Incluye estado (ej. "Miranda") para que Admin muestre el listado de clientes.
 router.get('/usuarios', async (req, res) => {
   try {
     const users = await User.find({ role: { $ne: 'master' } })
       .select('-password')
       .populate('farmaciaId')
-      .sort({ createdAt: -1 });
-    res.json(users);
+      .sort({ createdAt: -1 })
+      .lean();
+    const list = users.map((u) => ({
+      ...u,
+      estado: u.estado ?? '',
+      municipio: u.municipio ?? '',
+    }));
+    res.json(list);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar usuarios' });
