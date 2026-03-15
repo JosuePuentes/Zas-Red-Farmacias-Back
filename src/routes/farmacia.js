@@ -15,6 +15,7 @@ import Proveedor from '../models/Proveedor.js';
 import PrecioProveedor from '../models/PrecioProveedor.js';
 import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
 import { notificarClientesProductoDisponible } from '../util/notificarProductoDisponible.js';
+import { invalidarCacheInventarioMaster } from '../util/cacheInventarioMaster.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 
@@ -558,6 +559,8 @@ router.post('/inventario/upload', upload.single('archivo'), async (req, res) => 
       }
     }
 
+    invalidarCacheInventarioMaster();
+
     res.json({
       message: 'Inventario cargado',
       creados,
@@ -654,49 +657,80 @@ function mapProductoToDTO(p) {
 }
 
 // Inventario detallado para la farmacia.
-// - Siempre muestra TODO el catálogo maestro (código/descripcion/marca) aunque la farmacia no tenga inventario cargado.
-// - Para cada código, si la farmacia tiene Producto propio, se muestran su precio/existencia/imagen.
-// - Si la farmacia tiene Plan Full, añade existenciaGlobal (suma de existencia por codigo en todas las farmacias)
-//   y productosSolicitados (cantidad de solicitudes de clientes por codigo).
+// Query: q (búsqueda en servidor por código/descripción/marca), page, page_size (si se envían → respuesta { items, total }).
+// - Base: catálogo maestro (filtrado por q si viene); por código se fusiona producto de la farmacia y, si Plan Full, existencia global y solicitudes.
 router.get('/inventario', async (req, res) => {
   try {
     const farmaciaId = getFarmaciaId(req);
     if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
     const farmacia = await Farmacia.findById(farmaciaId).select('planProActivo');
 
-    // 1) Catálogo maestro completo: base de todos los códigos que se mostrarán.
+    const q = (req.query.q && String(req.query.q).trim()) || '';
+    const pageParam = parseInt(req.query.page, 10);
+    const pageSizeParam = parseInt(req.query.page_size, 10);
+    const usePagination = Number.isInteger(pageParam) && Number.isInteger(pageSizeParam) && pageParam >= 1 && pageSizeParam >= 1;
+    const page = usePagination ? Math.max(1, pageParam) : 1;
+    const page_size = usePagination ? Math.min(500, Math.max(1, pageSizeParam)) : 0;
+    const skip = usePagination ? (page - 1) * page_size : 0;
+
     const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
     const coll = dbCatalogo.collection('catalogo_maestro');
-    const catalogoDocs = await coll
-      .find({}, { projection: { ean_13: 1, description: 1, brand: 1, image_path: 1 } })
-      .toArray();
 
-    // 2) Productos de esta farmacia (solo los suyos, mach por codigo).
-    const productosFarmacia = await Producto.find({ farmaciaId }).sort({ codigo: 1 });
-    const productoByCodigo = new Map(productosFarmacia.map((p) => [p.codigo, p]));
-
-    // 3) Para Plan Full: existencia global y solicitudes por código, en TODO el catálogo.
-    let globalByCodigo = new Map();
-    let solicitudesByCodigo = new Map();
-    if (farmacia?.planProActivo) {
-      const codigos = [...new Set(catalogoDocs.map((d) => d.ean_13).filter(Boolean))];
-      if (codigos.length) {
-        const [globalAgg, solicitudesAgg] = await Promise.all([
-          Producto.aggregate([
-            { $match: { codigo: { $in: codigos } } },
-            { $group: { _id: '$codigo', existenciaGlobal: { $sum: '$existencia' } } },
-          ]),
-          SolicitudProductoCliente.aggregate([
-            { $match: { codigo: { $in: codigos } } },
-            { $group: { _id: '$codigo', productosSolicitados: { $sum: 1 } } },
-          ]),
-        ]);
-        globalByCodigo = new Map(globalAgg.map((g) => [g._id, g.existenciaGlobal]));
-        solicitudesByCodigo = new Map(solicitudesAgg.map((s) => [s._id, s.productosSolicitados]));
-      }
+    const baseFilter = { ean_13: { $exists: true, $ne: '' } };
+    let catalogFilter = baseFilter;
+    if (q) {
+      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(escapeRegex(q), 'i');
+      catalogFilter = {
+        ...baseFilter,
+        $or: [
+          { ean_13: re },
+          { description: re },
+          { brand: re },
+        ],
+      };
     }
 
-    // 4) Armar DTO por cada código del catálogo maestro.
+    let total = 0;
+    let catalogoDocs;
+    if (usePagination) {
+      total = await coll.countDocuments(catalogFilter);
+      catalogoDocs = await coll
+        .find(catalogFilter, { projection: { ean_13: 1, description: 1, brand: 1, image_path: 1 } })
+        .sort({ ean_13: 1 })
+        .skip(skip)
+        .limit(page_size)
+        .toArray();
+    } else {
+      catalogoDocs = await coll
+        .find(catalogFilter, { projection: { ean_13: 1, description: 1, brand: 1, image_path: 1 } })
+        .sort({ ean_13: 1 })
+        .toArray();
+    }
+
+    const codigos = [...new Set(catalogoDocs.map((d) => d.ean_13).filter(Boolean))];
+    const productosFarmacia = codigos.length
+      ? await Producto.find({ farmaciaId, codigo: { $in: codigos } }).sort({ codigo: 1 })
+      : [];
+    const productoByCodigo = new Map(productosFarmacia.map((p) => [p.codigo, p]));
+
+    let globalByCodigo = new Map();
+    let solicitudesByCodigo = new Map();
+    if (farmacia?.planProActivo && codigos.length) {
+      const [globalAgg, solicitudesAgg] = await Promise.all([
+        Producto.aggregate([
+          { $match: { codigo: { $in: codigos } } },
+          { $group: { _id: '$codigo', existenciaGlobal: { $sum: '$existencia' } } },
+        ]),
+        SolicitudProductoCliente.aggregate([
+          { $match: { codigo: { $in: codigos } } },
+          { $group: { _id: '$codigo', productosSolicitados: { $sum: 1 } } },
+        ]),
+      ]);
+      globalByCodigo = new Map(globalAgg.map((g) => [g._id, g.existenciaGlobal]));
+      solicitudesByCodigo = new Map(solicitudesAgg.map((s) => [s._id, s.productosSolicitados]));
+    }
+
     const dto = catalogoDocs.map((d) => {
       const codigo = d.ean_13;
       const prod = productoByCodigo.get(codigo) || null;
@@ -743,7 +777,11 @@ router.get('/inventario', async (req, res) => {
       return base;
     });
 
-    res.json(dto);
+    if (usePagination) {
+      res.json({ items: dto, total });
+    } else {
+      res.json(dto);
+    }
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener inventario' });

@@ -7,6 +7,7 @@ import Farmacia from '../models/Farmacia.js';
 import Producto, { CATEGORIAS_PRODUCTO } from '../models/Producto.js';
 import Catalogo from '../models/Catalogo.js';
 import { notificarClientesProductoDisponible } from '../util/notificarProductoDisponible.js';
+import { invalidarCacheInventarioMaster } from '../util/cacheInventarioMaster.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 
@@ -164,6 +165,8 @@ router.post('/:id/inventario/cargar-excel',
           }
         }
       }
+
+      invalidarCacheInventarioMaster();
 
       res.json({
         creados,

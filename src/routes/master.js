@@ -3,14 +3,18 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { body, validationResult } from 'express-validator';
+import mongoose from 'mongoose';
 import User from '../models/User.js';
 import Farmacia from '../models/Farmacia.js';
+import Producto from '../models/Producto.js';
 import SolicitudDelivery from '../models/SolicitudDelivery.js';
 import SolicitudFarmacia from '../models/SolicitudFarmacia.js';
 import SolicitudPlanPro from '../models/SolicitudPlanPro.js';
+import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
 import DeliveryStats from '../models/DeliveryStats.js';
 import { auth, requireRole } from '../middleware/auth.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
+import { getCachedInventario, setCachedInventario } from '../util/cacheInventarioMaster.js';
 
 const router = Router();
 const __dirnameMaster = path.dirname(fileURLToPath(import.meta.url));
@@ -77,6 +81,114 @@ router.get('/farmacias', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar farmacias' });
+  }
+});
+
+// GET /api/master/inventario/solicitudes-detalle?codigo=XXX — detalle de quién solicitó un producto (para expandir fila sin cargar todo).
+router.get('/inventario/solicitudes-detalle', async (req, res) => {
+  try {
+    const codigo = req.query.codigo != null ? String(req.query.codigo).trim() : '';
+    if (!codigo) return res.status(400).json({ error: 'codigo requerido' });
+
+    const solicitudes = await SolicitudProductoCliente.find({ codigo })
+      .select('clienteId createdAt')
+      .populate('clienteId', 'nombre apellido email')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const detalle = solicitudes.map((s) => {
+      const user = s.clienteId;
+      return {
+        userId: user?._id ?? s.clienteId,
+        nombre: user?.nombre && user?.apellido ? `${user.nombre} ${user.apellido}`.trim() : user?.email || null,
+        email: user?.email ?? null,
+        fecha: s.createdAt,
+      };
+    });
+
+    res.json({ codigo, detalle });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener detalle de solicitudes' });
+  }
+});
+
+// GET /api/master/inventario — solo admin (master). Paginado: page, page_size. Respuesta { items, total }.
+// Usa pipeline de agregación y solo carga la página actual del catálogo para mejor rendimiento.
+router.get('/inventario', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const page_size = Math.min(500, Math.max(1, parseInt(req.query.page_size, 10) || 300));
+    const skip = (page - 1) * page_size;
+
+    const cached = getCachedInventario(page, page_size);
+    if (cached) return res.json(cached);
+
+    const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
+    const coll = dbCatalogo.collection('catalogo_maestro');
+
+    const total = await coll.countDocuments({ ean_13: { $exists: true, $ne: '' } });
+    const catalogoDocs = await coll
+      .find({ ean_13: { $exists: true, $ne: '' } }, { projection: { ean_13: 1, description: 1, brand: 1 } })
+      .sort({ ean_13: 1 })
+      .skip(skip)
+      .limit(page_size)
+      .toArray();
+
+    const codigos = catalogoDocs.map((d) => d.ean_13).filter(Boolean);
+    if (codigos.length === 0) {
+      const out = { items: [], total };
+      setCachedInventario(page, page_size, out);
+      return res.json(out);
+    }
+
+    const [productoAgg, solicitudesAgg] = await Promise.all([
+      Producto.aggregate([
+        { $match: { codigo: { $in: codigos } } },
+        { $sort: { codigo: 1 } },
+        {
+          $group: {
+            _id: '$codigo',
+            existenciaGlobal: { $sum: '$existencia' },
+            descripcion: { $first: '$descripcion' },
+            marca: { $first: '$marca' },
+            categoria: { $first: '$categoria' },
+          },
+        },
+      ]),
+      SolicitudProductoCliente.aggregate([
+        { $match: { codigo: { $in: codigos } } },
+        { $group: { _id: '$codigo', cantidad: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const byCodigo = new Map(productoAgg.map((p) => [p._id, p]));
+    const solicitudesByCodigo = new Map(solicitudesAgg.map((s) => [s._id, s.cantidad]));
+
+    const items = catalogoDocs.map((d) => {
+      const codigo = d.ean_13;
+      const p = byCodigo.get(codigo);
+      const descripcion = (p?.descripcion && p.descripcion.trim()) || (d.description && d.description.trim()) || '';
+      const marca = (p?.marca && p.marca.trim()) || (d.brand && d.brand.trim()) || '';
+      const departamento = p?.categoria ?? null;
+      const existenciaGlobal = p?.existenciaGlobal ?? 0;
+      const cantidad = solicitudesByCodigo.get(codigo) ?? 0;
+      return {
+        codigo,
+        descripcion,
+        marca,
+        departamento,
+        existenciaGlobal,
+        solicitudes: { cantidad },
+      };
+    });
+
+    const out = { items, total };
+    setCachedInventario(page, page_size, out);
+    res.json(out);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener inventario maestro' });
   }
 });
 

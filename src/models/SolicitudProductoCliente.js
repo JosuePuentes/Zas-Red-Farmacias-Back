@@ -7,6 +7,7 @@ const solicitudProductoClienteSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 solicitudProductoClienteSchema.index({ clienteId: 1, codigo: 1 });
+solicitudProductoClienteSchema.index({ codigo: 1 });
 solicitudProductoClienteSchema.index({ codigo: 1, notificadoEnDisponible: 1 });
 
 export default mongoose.model('SolicitudProductoCliente', solicitudProductoClienteSchema);

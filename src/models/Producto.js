@@ -46,8 +46,9 @@ productoSchema.virtual('descripcionVisible').get(function () {
 productoSchema.set('toJSON', { virtuals: true });
 productoSchema.set('toObject', { virtuals: true });
 
-// Índice para búsqueda por farmacia y filtros
+// Índices para búsqueda y agregación (inventario maestro, existencias por código)
 productoSchema.index({ farmaciaId: 1, codigo: 1 }, { unique: true });
+productoSchema.index({ codigo: 1 });
 productoSchema.index({ farmaciaId: 1, descripcion: 'text', marca: 'text' });
 
 export default mongoose.model('Producto', productoSchema);
