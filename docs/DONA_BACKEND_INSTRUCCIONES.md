@@ -9,10 +9,12 @@
 
 ### Productos en el mensaje
 
-- Si hay producto asociado a la respuesta, añadir al final del mensaje:
-  - `\n__PRODUCTOS__\n` + JSON del producto.
-- Así el frontend puede parsear y mostrar la **tarjeta** con foto, precio y botón “Agregar al carrito”.
-- La respuesta JSON del chat puede incluir además el objeto `product` en el body para uso directo.
+- Cada vez que Dona mencione un medicamento, añadir al final del mensaje: `\n__PRODUCTOS__\n` + **JSON array** con los productos.
+- Cada producto debe llevar: **id**, **codigo**, **descripcion**, **precio**, **imagen**, **farmaciaId**, **disponible** (boolean) y **existencia** (number).
+- **Si hay stock:** mensaje tipo “Lo tenemos en $X, aquí te lo dejo para agregar al carrito” y producto con **disponible: true** (y existencia > 0).
+- **Si no hay stock:** mensaje tipo “Es el [medicamento] pero no tenemos disponible; puedes solicitarlo” y producto con **disponible: false** o **existencia: 0**.
+- Así el frontend puede mostrar la tarjeta con foto, el botón “Agregar al carrito” solo cuando haya stock y el botón “Solicitar” cuando no.
+- La respuesta JSON del chat incluye además el array `product` en el body para uso directo.
 
 ### Historial por cliente
 

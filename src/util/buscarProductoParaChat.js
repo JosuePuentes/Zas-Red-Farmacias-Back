@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Producto from '../models/Producto.js';
 
 function getPrecio(producto) {
@@ -9,19 +10,34 @@ function getPrecio(producto) {
   return Math.round(base * (1 - desc / 100) * 100) / 100;
 }
 
+function toProductItem(p, precio) {
+  const descripcion = p.descripcionCatalogo || p.descripcionPersonalizada || p.descripcion || '';
+  const existencia = p.existencia ?? 0;
+  return {
+    id: p._id.toString(),
+    codigo: p.codigo || '',
+    descripcion,
+    precio: precio ?? 0,
+    imagen: p.foto || null,
+    farmaciaId: (p.farmaciaId && (p.farmaciaId._id || p.farmaciaId).toString()) || null,
+    disponible: existencia > 0,
+    existencia,
+  };
+}
+
 /**
- * Busca un producto por nombre o código para mostrar en el chat (precio + card).
- * Devuelve el más barato disponible o null.
+ * Busca productos por nombre o código para el chat Dona.
+ * Devuelve array de productos (con o sin stock); cada uno lleva disponible (boolean) y existencia (number).
+ * Si hay stock: al menos uno con disponible true para "Agregar al carrito". Si no hay: disponible false para "Solicitar".
  * @param {string} query - Texto del usuario (ej. "Paracetamol", "ibuprofeno 400")
- * @returns {Promise<{ id, codigo, descripcion, precio, imagen, farmaciaId, existencia } | null>}
+ * @returns {Promise<Array<{ id, codigo, descripcion, precio, imagen, farmaciaId, disponible, existencia }>>}
  */
 export async function buscarProductoParaChat(query) {
   const q = (query && String(query).trim()) || '';
-  if (!q || q.length < 2) return null;
+  if (!q || q.length < 2) return [];
 
   const search = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   const productos = await Producto.find({
-    existencia: { $gt: 0 },
     $or: [
       { codigo: search },
       { descripcion: search },
@@ -32,26 +48,38 @@ export async function buscarProductoParaChat(query) {
     .limit(50)
     .lean();
 
-  if (!productos.length) return null;
-
-  let best = productos[0];
-  let bestPrecio = getPrecio(best);
-  for (const p of productos) {
-    const precio = getPrecio(p);
-    if (precio < bestPrecio) {
-      best = p;
-      bestPrecio = precio;
+  if (productos.length === 0) {
+    const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
+    const coll = dbCatalogo.collection('catalogo_maestro');
+    const enCatalogo = await coll.findOne({
+      $or: [
+        { ean_13: search },
+        { description: search },
+        { brand: search },
+      ],
+    });
+    if (enCatalogo) {
+      return [{
+        id: null,
+        codigo: enCatalogo.ean_13 || '',
+        descripcion: (enCatalogo.description && enCatalogo.description.trim()) || '',
+        precio: 0,
+        imagen: enCatalogo.image_path || null,
+        farmaciaId: null,
+        disponible: false,
+        existencia: 0,
+      }];
     }
+    return [];
   }
 
-  const descripcion = best.descripcionCatalogo || best.descripcionPersonalizada || best.descripcion || '';
-  return {
-    id: best._id.toString(),
-    codigo: best.codigo || '',
-    descripcion,
-    precio: bestPrecio,
-    imagen: best.foto || null,
-    farmaciaId: (best.farmaciaId && (best.farmaciaId._id || best.farmaciaId).toString()) || null,
-    existencia: best.existencia ?? 0,
-  };
+  const conStock = productos.filter((p) => (p.existencia ?? 0) > 0);
+  const sinStock = productos.filter((p) => (p.existencia ?? 0) <= 0);
+
+  if (conStock.length > 0) {
+    conStock.sort((a, b) => getPrecio(a) - getPrecio(b));
+    return conStock.map((p) => toProductItem(p, getPrecio(p)));
+  }
+
+  return sinStock.slice(0, 5).map((p) => toProductItem(p, getPrecio(p)));
 }

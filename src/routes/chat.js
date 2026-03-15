@@ -30,12 +30,23 @@ function buildPrompt(userName, messages, productData) {
   const parts = [
     `${SYSTEM_PROMPT}\n\nNombre del cliente: ${safeName}. Usa su nombre solo al saludar o al retomar.`,
   ];
-  if (productData) {
-    parts.push(
-      `\n[Datos de producto para esta respuesta]\n`,
-      `Nombre/descripción: ${productData.descripcion}. Precio: $${Number(productData.precio).toFixed(2)}. Código: ${productData.codigo}.`,
-      `Responde con naturalidad dando el precio y animando a agregarlo al carrito. No uses [ACCION:...].\n`
-    );
+  if (productData && productData.length > 0) {
+    const conStock = productData.filter((p) => p.disponible);
+    const primerConStock = conStock[0];
+    if (primerConStock) {
+      parts.push(
+        `\n[Datos de producto para esta respuesta]\n`,
+        `El producto "${primerConStock.descripcion}" (código ${primerConStock.codigo}) SÍ está disponible. Precio: $${Number(primerConStock.precio).toFixed(2)}.`,
+        `Responde en tono Dona tipo: "Lo tenemos en $${Number(primerConStock.precio).toFixed(2)}, aquí te lo dejo para agregar al carrito." No uses [ACCION:...].\n`
+      );
+    } else {
+      const primero = productData[0];
+      parts.push(
+        `\n[Datos de producto para esta respuesta]\n`,
+        `El producto "${primero.descripcion}" (código ${primero.codigo}) NO está disponible en este momento.`,
+        `Responde en tono Dona tipo: "Es el [nombre del medicamento] pero no tenemos disponible; puedes solicitarlo y te avisamos cuando llegue." No uses [ACCION:...].\n`
+      );
+    }
   }
   parts.push('\n[Conversación]\n');
   for (const m of messages) {
@@ -81,7 +92,7 @@ router.post('/', auth, async (req, res) => {
   const queryForProduct = followUp && userMessages.length
     ? String((userMessages[userMessages.length - 1].content || '').trim())
     : lastContent;
-  let productData = null;
+  let productData = [];
   if (queryForProduct.length >= 2) {
     productData = await buscarProductoParaChat(queryForProduct);
   }
@@ -92,30 +103,33 @@ router.post('/', auth, async (req, res) => {
     const result = await model.generateContent(prompt);
     const text = (result.response.text() || '').trim();
 
-    const responseProduct = productData ? {
-      id: productData.id,
-      codigo: productData.codigo,
-      descripcion: productData.descripcion,
-      precio: productData.precio,
-      imagen: productData.imagen,
-      farmaciaId: productData.farmaciaId,
-      existencia: productData.existencia,
-    } : undefined;
+    const productsPayload = productData.length > 0
+      ? productData.map((p) => ({
+          id: p.id,
+          codigo: p.codigo,
+          descripcion: p.descripcion,
+          precio: p.precio,
+          imagen: p.imagen,
+          farmaciaId: p.farmaciaId,
+          disponible: p.disponible,
+          existencia: p.existencia,
+        }))
+      : [];
 
-    const messageWithProducts = responseProduct
-      ? text + '\n__PRODUCTOS__\n' + JSON.stringify(responseProduct)
+    const messageWithProducts = productsPayload.length > 0
+      ? text + '\n__PRODUCTOS__\n' + JSON.stringify(productsPayload)
       : text;
 
     const toSave = [
       ...messages.map((m) => ({ role: m.role, content: m.content || '', product: undefined })),
-      { role: 'assistant', content: messageWithProducts, product: responseProduct },
+      { role: 'assistant', content: messageWithProducts, product: productsPayload.length ? productsPayload : undefined },
     ];
     await ConversacionDona.appendMessages(req.userId, toSave);
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.json({
       message: messageWithProducts,
-      product: responseProduct || undefined,
+      product: productsPayload.length ? productsPayload : undefined,
     });
   } catch (err) {
     console.error('Error en /api/chat', err);
