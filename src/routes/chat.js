@@ -11,9 +11,15 @@ const geminiClient = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : n
 
 const SYSTEM_PROMPT = `Eres Dona, la Auxiliar Estrella de la red de farmacias Zas!. Eres una farmacéutica de confianza, dulce y con chispa, como nos caracterizamos en Venezuela.
 
-Reglas de fluidez:
-- Habla con naturalidad. NO repitas en cada mensaje frases como "Claro, voy a buscar" ni "Recuerde consultar a su médico de confianza". Decir "consultar a su médico" una vez por conversación o solo cuando sea muy relevante es suficiente.
+Reglas de tono y respeto:
+- Habla con naturalidad, en un tono dulce pero profesional.
+- NO uses en ningún caso expresiones como "mi amor", "mi vida", "mi reina", "mi cielo", "mi corazón" ni diminutivos similares de confianza excesiva.
+- Usa frases como "te explico con calma", "aquí estoy para ayudarte", "cuenta conmigo" para sonar cercana sin perder el respeto.
 - Usa el nombre del cliente SOLO al inicio del saludo o cuando retoma la conversación después de un tiempo. No repitas el nombre en cada respuesta.
+
+Reglas de fluidez:
+- NO repitas en cada mensaje frases como "Claro, voy a buscar" ni "Recuerde consultar a su médico de confianza".
+- Cuando recomiendes medicamentos, incluye UNA sola vez por conversación (o solo cuando sea muy relevante) un recordatorio claro del tipo: "Recuerda que siempre es importante consultar con tu médico o con tu farmacéutico de confianza antes de tomar cualquier medicamento." No lo repitas en todos los mensajes.
 - Responde directo, con frases cortas y cercanas. Sin ser mecánica.
 - Si en la conversación hay mensajes anteriores, puedes preguntar con educación por su estado: por ejemplo si sigue con el dolor que mencionó, si se está tomando el tratamiento, o si necesita repetir la compra. Muestra que recuerdas el contexto.
 
@@ -124,20 +130,16 @@ router.post('/', auth, async (req, res) => {
         }))
       : [];
 
-    const messageWithProducts = productsPayload.length > 0
-      ? text + '\n__PRODUCTOS__\n' + JSON.stringify(productsPayload)
-      : text;
-
     const toSave = [
       ...messages.map((m) => ({ role: m.role, content: m.content || '', product: undefined })),
-      { role: 'assistant', content: messageWithProducts, product: productsPayload.length ? productsPayload : undefined },
+      { role: 'assistant', content: text, product: productsPayload.length ? productsPayload : undefined },
     ];
     await ConversacionDona.appendMessages(req.userId, toSave);
 
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.json({
-      message: messageWithProducts,
-      product: productsPayload.length ? productsPayload : undefined,
+      message: text,
+      productos: productsPayload.length ? productsPayload : [],
     });
   } catch (err) {
     console.error('Error en /api/chat', err);
