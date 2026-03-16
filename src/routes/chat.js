@@ -108,6 +108,192 @@ function detectSymptomKeywords(text) {
     keywords.add('gel antiinflamatorio');
   }
 
+  // --- Síntomas respiratorios ---
+  // Tos seca
+  if (
+    (t.includes('tos') && t.includes('seca')) ||
+    t.includes('tos seca')
+  ) {
+    keywords.add('dextrometorfano');
+    keywords.add('jarabe antitusigeno');
+  }
+
+  // Tos con flema / congestión de pecho
+  if (
+    (t.includes('tos') && (t.includes('flema') || t.includes('moco'))) ||
+    t.includes('congestion en el pecho') ||
+    t.includes('congestión en el pecho') ||
+    t.includes('pecho congestionado')
+  ) {
+    keywords.add('ambroxol');
+    keywords.add('bromhexina');
+    keywords.add('jarabe expectorante');
+  }
+
+  // Congestión nasal / nariz tapada
+  if (
+    t.includes('nariz tapada') ||
+    t.includes('congestion nasal') ||
+    t.includes('congestión nasal') ||
+    (t.includes('moco') && t.includes('nariz'))
+  ) {
+    keywords.add('oximetazolina');
+    keywords.add('pseudoefedrina');
+    keywords.add('spray nasal descongestionante');
+  }
+
+  // Dolor de garganta
+  if (
+    t.includes('dolor de garganta') ||
+    (t.includes('garganta') && (t.includes('dolor') || t.includes('ardor') || t.includes('irrita')))
+  ) {
+    keywords.add('pastillas para la garganta');
+    keywords.add('spray para la garganta');
+  }
+
+  // --- Sistema digestivo ---
+  // Acidez / ardor en el pecho
+  if (
+    t.includes('acidez') ||
+    t.includes('ardor en el pecho') ||
+    t.includes('ardor en el estomago') ||
+    t.includes('ardor en el estómago') ||
+    t.includes('reflujo')
+  ) {
+    keywords.add('antiacido');
+    keywords.add('milanta');
+    keywords.add('hidroxido de aluminio');
+    keywords.add('omeprazol');
+  }
+
+  // Gases / flatulencia / hinchazón
+  if (
+    t.includes('gases') ||
+    t.includes('flatulencia') ||
+    t.includes('hinchazon') && t.includes('estomago') ||
+    t.includes('hinchazón') && t.includes('estómago') ||
+    t.includes('barriga inflamada')
+  ) {
+    keywords.add('simeticona');
+  }
+
+  // Diarrea
+  if (
+    t.includes('diarrea') ||
+    (t.includes('heces') && t.includes('liquidas')) ||
+    (t.includes('heces') && t.includes('líquidas'))
+  ) {
+    keywords.add('loperamida');
+    keywords.add('suero oral');
+  }
+
+  // Estreñimiento
+  if (
+    t.includes('estrenimiento') ||
+    t.includes('estreñimiento') ||
+    (t.includes('dificultad') && t.includes('ir al baño'))
+  ) {
+    keywords.add('laxante');
+    keywords.add('fibra');
+  }
+
+  // Náuseas / vómitos
+  if (
+    t.includes('nauseas') ||
+    t.includes('náuseas') ||
+    t.includes('vomito') ||
+    t.includes('vómito') ||
+    t.includes('ganas de vomitar')
+  ) {
+    keywords.add('metoclopramida');
+    keywords.add('domperidona');
+  }
+
+  // --- Dolores específicos adicionales ---
+  // Dolor de riñones / cólico renal
+  if (
+    t.includes('dolor de riñones') ||
+    t.includes('dolor de rinones') ||
+    t.includes('colico renal') ||
+    t.includes('cólico renal')
+  ) {
+    keywords.add('hioscina');
+    keywords.add('dipirona');
+    keywords.add('buscapina');
+  }
+
+  // Dolor menstrual / cólicos menstruales
+  if (
+    t.includes('dolor menstrual') ||
+    t.includes('colicos menstruales') ||
+    t.includes('cólicos menstruales') ||
+    (t.includes('colico') && t.includes('regla')) ||
+    (t.includes('cólico') && t.includes('regla'))
+  ) {
+    keywords.add('ibuprofeno');
+    keywords.add('naproxeno');
+    keywords.add('buscapina fem');
+  }
+
+  // Dolor de muela
+  if (
+    t.includes('dolor de muela') ||
+    (t.includes('muela') && t.includes('dolor'))
+  ) {
+    keywords.add('ketoprofeno');
+    keywords.add('ketorolaco');
+  }
+
+  // --- Infecciones comunes ---
+  // Infección urinaria / ardor al orinar
+  if (
+    t.includes('infeccion urinaria') ||
+    t.includes('infección urinaria') ||
+    (t.includes('ardor') && t.includes('orinar')) ||
+    (t.includes('orina') && t.includes('ardor'))
+  ) {
+    keywords.add('fenazopiridina');
+    keywords.add('analgesico urinario');
+  }
+
+  // Hongos en piel o pies
+  if (
+    t.includes('hongos en los pies') ||
+    t.includes('pie de atleta') ||
+    (t.includes('hongos') && (t.includes('piel') || t.includes('uña') || t.includes('uñas'))) ||
+    t.includes('micosis')
+  ) {
+    keywords.add('clotrimazol');
+    keywords.add('terbinafina');
+    keywords.add('crema antifungica');
+  }
+
+  // --- Cuidado crónico ---
+  // Tensión alta / hipertensión
+  if (
+    t.includes('tension alta') ||
+    t.includes('tensión alta') ||
+    t.includes('hipertension') ||
+    t.includes('hipertensión') ||
+    (t.includes('presion') && t.includes('alta')) ||
+    (t.includes('presión') && t.includes('alta'))
+  ) {
+    keywords.add('losartan');
+    keywords.add('enalapril');
+    keywords.add('amlodipina');
+  }
+
+  // Azúcar alta / diabetes
+  if (
+    t.includes('azucar alta') ||
+    t.includes('azúcar alta') ||
+    t.includes('diabetes') ||
+    (t.includes('glucosa') && t.includes('alta'))
+  ) {
+    keywords.add('metformina');
+    keywords.add('glibenclamida');
+  }
+
   return Array.from(keywords);
 }
 
