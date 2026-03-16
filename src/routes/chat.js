@@ -376,7 +376,13 @@ function isGreetingOrSmallTalk(text) {
       t === 'porque no?' ||
       t === 'por qué no?' ||
       t === 'porque no' ||
-      t === 'por que no'
+      t === 'por que no' ||
+      t === 'ok' ||
+      t === 'ok.' ||
+      t === 'vale' ||
+      t === 'gracias' ||
+      t === 'muestrame' ||
+      t === 'muéstrame'
     ) {
       return true;
     }
