@@ -195,7 +195,7 @@ router.get('/inventario', async (req, res) => {
       return res.json(out);
     }
 
-    const [productoAgg, solicitudesAgg] = await Promise.all([
+    const [productoAgg, solicitudesAgg, totalSolicitudesGlobalAgg] = await Promise.all([
       Producto.aggregate([
         { $match: { codigo: { $in: codigos } } },
         { $sort: { codigo: 1 } },
@@ -212,6 +212,10 @@ router.get('/inventario', async (req, res) => {
       SolicitudProductoCliente.aggregate([
         { $match: { codigo: { $in: codigos } } },
         { $group: { _id: '$codigo', cantidad: { $sum: 1 } } },
+      ]),
+      // Total global de solicitudes (todas las páginas / todos los códigos)
+      SolicitudProductoCliente.aggregate([
+        { $group: { _id: null, cantidad: { $sum: 1 } } },
       ]),
     ]);
 
@@ -236,7 +240,9 @@ router.get('/inventario', async (req, res) => {
       };
     });
 
-    const out = { items, total };
+    const totalSolicitudesGlobal = totalSolicitudesGlobalAgg[0]?.cantidad ?? 0;
+
+    const out = { items, total, totalSolicitudes: totalSolicitudesGlobal };
     if (useCache) {
       setCachedInventario(page, page_size, out);
     }
