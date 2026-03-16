@@ -124,8 +124,9 @@ router.get('/inventario', async (req, res) => {
 
     const qRaw = (req.query.q && String(req.query.q).trim()) || '';
     const q = qRaw.toLowerCase();
+    const soloConSolicitudes = String(req.query.solo_con_solicitudes || '').toLowerCase() === 'true';
 
-    const useCache = !q;
+    const useCache = !q && !soloConSolicitudes;
     if (useCache) {
       const cached = getCachedInventario(page, page_size);
       if (cached) return res.json(cached);
@@ -157,13 +158,35 @@ router.get('/inventario', async (req, res) => {
       }
     }
 
-    const total = await coll.countDocuments(catalogFilter);
-    const catalogoDocs = await coll
-      .find(catalogFilter, { projection: { ean_13: 1, description: 1, brand: 1 } })
-      .sort({ ean_13: 1 })
-      .skip(skip)
-      .limit(page_size)
-      .toArray();
+    let catalogoDocs;
+    let total = 0;
+
+    if (soloConSolicitudes) {
+      // Modo especial: solo productos que tienen solicitudes (en cualquier página).
+      const aggSolicitudes = await SolicitudProductoCliente.aggregate([
+        { $group: { _id: '$codigo', cantidad: { $sum: 1 } } },
+      ]);
+      const codigosSolicitados = aggSolicitudes.map((s) => s._id).filter(Boolean);
+
+      if (!codigosSolicitados.length) {
+        return res.json({ items: [], total: 0 });
+      }
+
+      catalogFilter = { ...catalogFilter, ean_13: { $in: codigosSolicitados } };
+      total = await coll.countDocuments(catalogFilter);
+      catalogoDocs = await coll
+        .find(catalogFilter, { projection: { ean_13: 1, description: 1, brand: 1 } })
+        .sort({ ean_13: 1 })
+        .toArray();
+    } else {
+      total = await coll.countDocuments(catalogFilter);
+      catalogoDocs = await coll
+        .find(catalogFilter, { projection: { ean_13: 1, description: 1, brand: 1 } })
+        .sort({ ean_13: 1 })
+        .skip(skip)
+        .limit(page_size)
+        .toArray();
+    }
 
     const codigos = catalogoDocs.map((d) => d.ean_13).filter(Boolean);
     if (codigos.length === 0) {
