@@ -11,6 +11,7 @@ import RecordatorioMedicamento from '../models/RecordatorioMedicamento.js';
 import SolicitudProductoCliente from '../models/SolicitudProductoCliente.js';
 import SolicitudProductoNoCatalogado from '../models/SolicitudProductoNoCatalogado.js';
 import User from '../models/User.js';
+import { invalidarCacheInventarioMaster } from '../util/cacheInventarioMaster.js';
 import { auth, requireRole, attachUser } from '../middleware/auth.js';
 import { upload, uploadMemory } from '../middleware/upload.js';
 import { ESTADOS_VENEZUELA } from '../constants/estados.js';
@@ -512,6 +513,9 @@ router.post('/solicitar-producto', async (req, res) => {
     }
 
     await SolicitudProductoCliente.create({ clienteId, codigo });
+    // Al registrar una solicitud, invalidamos el caché del inventario maestro
+    // para que Admin y Farmacia (Plan Pro) vean de inmediato el nuevo conteo.
+    invalidarCacheInventarioMaster();
     res.status(201).json({ message: 'Solicitud registrada. Te avisaremos cuando esté disponible.' });
   } catch (e) {
     console.error(e);
@@ -544,6 +548,9 @@ router.post('/solicitar-producto-por-nombre', async (req, res) => {
     }
 
     await SolicitudProductoNoCatalogado.create({ clienteId, nombre });
+    // También invalidamos el caché de inventario maestro para reflejar
+    // los cambios en módulos que muestren "medicamentos solicitados (no en catálogo)".
+    invalidarCacheInventarioMaster();
     res.status(201).json({ message: 'Solicitud registrada. Te avisaremos si lo conseguimos.' });
   } catch (e) {
     console.error(e);
