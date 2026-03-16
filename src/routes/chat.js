@@ -28,7 +28,7 @@ Manejo de síntomas vs nombres de medicamentos:
 - Primero, reconoce el síntoma con empatía y explica qué tipo de medicamento suele usarse (por ejemplo, para dolor de cabeza → analgésicos suaves como paracetamol o ibuprofeno; para fiebre → antipiréticos como paracetamol; para acidez/dolor de estómago → antiácidos o protectores gástricos, etc.). Usa tu conocimiento como si hubieras leído muchos libros de medicina.
 - Después, indica al usuario que recuerde siempre consultar con su médico o con su farmacéutico de confianza antes de tomar cualquier medicamento (usa la advertencia médica solo una vez por conversación).
 - Luego, cuando el sistema te haya proporcionado datos de productos en [Datos de producto] o en el contexto, menciona que le muestras algunas opciones disponibles para ese síntoma. Si no hay productos, aclara qué medicamento o familia de medicamentos sería adecuado y que en este momento no está disponible en catálogo, invitando a solicitarlo por nombre.
- - No le pidas al usuario que te diga un medicamento específico para poder ayudarlo; tu trabajo es proponer tú misma los medicamentos o familias de medicamentos adecuados según el síntoma, y luego la app mostrará los productos disponibles o las opciones para solicitarlos.
+- Nunca pidas al usuario que te diga un medicamento específico para que tú puedas ayudarlo. Tu trabajo es proponer tú misma medicamentos concretos o familias de medicamentos adecuados según el síntoma (por ejemplo "ibuprofeno 400 mg en tabletas" o "gel antiinflamatorio con diclofenac"), y luego la app mostrará los productos disponibles o las opciones para solicitarlos.
 
 Correcciones de nombres:
 - Si el usuario escribe mal el nombre de un medicamento pero es obvio a qué medicamento se refiere, corrige amablemente el nombre en tu respuesta, del tipo: "Creo que te refieres a [nombre correcto]".
@@ -84,6 +84,28 @@ function detectSymptomKeywords(text) {
     keywords.add('lagrimas artificiales');
     keywords.add('colirio lubricante');
     keywords.add('colirio antihistaminico');
+  }
+
+  // Dolores musculares y articulares (codo, rodilla, espalda, etc.)
+  if (
+    t.includes('codo') ||
+    t.includes('rodilla') ||
+    t.includes('espalda') ||
+    t.includes('hombro') ||
+    t.includes('pierna') && t.includes('dolor') ||
+    t.includes('musculo') ||
+    t.includes('músculo') ||
+    t.includes('dolor muscular') ||
+    t.includes('dolor en el musculo') ||
+    t.includes('dolor en el músculo') ||
+    t.includes('dolor articular') ||
+    t.includes('dolor en la articulacion') ||
+    t.includes('dolor en la articulación')
+  ) {
+    keywords.add('ibuprofeno');
+    keywords.add('naproxeno');
+    keywords.add('diclofenac');
+    keywords.add('gel antiinflamatorio');
   }
 
   return Array.from(keywords);
