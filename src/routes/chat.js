@@ -315,6 +315,31 @@ function detectSymptomKeywords(text) {
     keywords.add('medicamento para el mareo');
   }
 
+  // Caída del cabello
+  if (
+    t.includes('se me cae el pelo') ||
+    t.includes('se me esta cayendo el pelo') ||
+    t.includes('se me está cayendo el pelo') ||
+    t.includes('caida del cabello') ||
+    t.includes('caída del cabello') ||
+    (t.includes('pelo') && t.includes('cayendo')) ||
+    (t.includes('cabello') && t.includes('cayendo'))
+  ) {
+    keywords.add('minoxidil');
+    keywords.add('shampoo anticaida');
+    keywords.add('vitaminas para el cabello');
+  }
+
+  // Caspa
+  if (
+    t.includes('caspa') ||
+    (t.includes('escamas') && t.includes('cuero cabelludo'))
+  ) {
+    keywords.add('shampoo ketoconazol');
+    keywords.add('shampoo anticaspa');
+    keywords.add('piritiona de zinc');
+  }
+
   return Array.from(keywords);
 }
 
