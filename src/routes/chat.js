@@ -294,6 +294,19 @@ function detectSymptomKeywords(text) {
     keywords.add('glibenclamida');
   }
 
+  // Mareos / vértigo
+  if (
+    t.includes('mareado') ||
+    t.includes('mareo') ||
+    t.includes('me siento mareado') ||
+    t.includes('vertigo') ||
+    t.includes('vértigo')
+  ) {
+    keywords.add('dimenhidrinato');
+    keywords.add('betahistina');
+    keywords.add('medicamento para el mareo');
+  }
+
   return Array.from(keywords);
 }
 
@@ -443,6 +456,15 @@ router.post('/', auth, async (req, res) => {
     });
   } catch (err) {
     console.error('Error en /api/chat', err);
+
+    // Manejo específico de límite de cuota / 429 de Gemini
+    if (err?.status === 429) {
+      return res.status(429).json({
+        error: 'Dona ha recibido muchas consultas seguidas y por hoy llegó al límite permitido. Por favor, intenta de nuevo en unos minutos mientras se restablece el servicio.',
+        retryAfterSeconds: 60,
+      });
+    }
+
     res.status(500).json({ error: 'Error en el chat de Dona' });
   }
 });
