@@ -456,9 +456,16 @@ router.post('/', auth, async (req, res) => {
   let lastContent = (lastUserMessage && lastUserMessage.content) ? String(lastUserMessage.content).trim() : '';
   // Si el último mensaje es corto o parece follow-up ("dame el precio", "sí", etc.), usar el mensaje anterior para buscar producto
   const followUp = /^(s[ií]|dame el precio|cu[aá]nto (cuesta|vale)|precio|lo tomo|agr[eé]galo)$/i.test(lastContent) && userMessages.length > 0;
-  const queryForProduct = followUp && userMessages.length
+  let queryForProduct = followUp && userMessages.length
     ? String((userMessages[userMessages.length - 1].content || '').trim())
     : lastContent;
+
+  // Normalizar preguntas tipo "tienes ibuprofeno", "hay paracetamol", "dispones de...", etc.
+  const productoPreguntaRegex = /^\s*(tienes?|tiene|dispones?|disponible\s*de?|hay|haber|tienen|disponen)\s+(.+)/i;
+  const tieneMatch = queryForProduct.match(productoPreguntaRegex);
+  if (tieneMatch && tieneMatch[2]) {
+    queryForProduct = String(tieneMatch[2]).trim();
+  }
 
   const ignoreProductSearch = isGreetingOrSmallTalk(queryForProduct);
   const symptomKeywords = ignoreProductSearch ? [] : detectSymptomKeywords(queryForProduct);
