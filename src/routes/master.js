@@ -224,6 +224,95 @@ router.get('/inventario', async (req, res) => {
   }
 });
 
+// GET /api/master/notificaciones-productos
+// Agrupa solicitudes por código (catalogadas) y por nombre (no catalogadas) para mostrar en la campana de Admin.
+router.get('/notificaciones-productos', async (req, res) => {
+  try {
+    // 1) Solicitudes por código (productos en catálogo)
+    const aggCodigos = await SolicitudProductoCliente.aggregate([
+      {
+        $group: {
+          _id: '$codigo',
+          totalSolicitudes: { $sum: 1 },
+          fecha: { $max: '$createdAt' },
+        },
+      },
+    ]);
+
+    const codigos = aggCodigos.map((s) => s._id).filter(Boolean);
+
+    let descripcionByCodigo = new Map();
+    if (codigos.length) {
+      const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
+      const coll = dbCatalogo.collection('catalogo_maestro');
+
+      const catalogDocs = await coll
+        .find(
+          { ean_13: { $in: codigos } },
+          { projection: { ean_13: 1, description: 1 } }
+        )
+        .toArray();
+      descripcionByCodigo = new Map(
+        catalogDocs
+          .filter((d) => d.ean_13)
+          .map((d) => [d.ean_13, (d.description || '').trim()])
+      );
+    }
+
+    const notifsCodigos = aggCodigos.map((s) => {
+      const codigo = s._id;
+      const descCatalogo = descripcionByCodigo.get(codigo) || '';
+      return {
+        id: codigo,
+        codigo,
+        descripcion: descCatalogo || codigo,
+        totalSolicitudes: s.totalSolicitudes || 0,
+        fecha: s.fecha,
+      };
+    });
+
+    // 2) Solicitudes no catalogadas (por nombre)
+    const aggNoCat = await SolicitudProductoNoCatalogado.aggregate([
+      {
+        $addFields: {
+          nombreNorm: { $toLower: '$nombre' },
+        },
+      },
+      {
+        $group: {
+          _id: '$nombreNorm',
+          nombreDisplay: { $first: '$nombre' },
+          totalSolicitudes: { $sum: 1 },
+          fecha: { $max: '$createdAt' },
+        },
+      },
+    ]);
+
+    const notifsNoCat = aggNoCat.map((s, idx) => {
+      const nombre = (s.nombreDisplay || '').trim() || s._id || `no-cat-${idx}`;
+      const id = `no-cat:${s._id || idx}`;
+      return {
+        id,
+        descripcion: `${nombre} (no en catálogo)`,
+        totalSolicitudes: s.totalSolicitudes || 0,
+        noCatalogado: true,
+        fecha: s.fecha,
+      };
+    });
+
+    const all = [...notifsCodigos, ...notifsNoCat].sort((a, b) => {
+      const da = a.fecha ? new Date(a.fecha).getTime() : 0;
+      const db = b.fecha ? new Date(b.fecha).getTime() : 0;
+      return db - da;
+    });
+
+    res.json(all);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener notificaciones de productos' });
+  }
+});
+
 // GET /api/master/solicitudes-no-catalogadas — solicitudes por nombre (productos no en catálogo), agrupado por nombre.
 router.get('/solicitudes-no-catalogadas', async (req, res) => {
   try {

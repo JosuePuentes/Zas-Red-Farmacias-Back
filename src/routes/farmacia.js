@@ -127,6 +127,68 @@ router.post('/plan-pro/solicitud',
   }
 );
 
+// GET /api/farmacia/notificaciones-productos
+// Devuelve productos con solicitudes asociadas para la farmacia (solo si tiene Plan Pro activo).
+router.get('/notificaciones-productos', requirePlanFull, async (req, res) => {
+  try {
+    const farmaciaId = getFarmaciaId(req);
+    if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
+
+    // Códigos que maneja esta farmacia
+    const productosFarmacia = await Producto.find({ farmaciaId })
+      .select('codigo descripcion descripcionCatalogo descripcionPersonalizada usarDescripcionCatalogo')
+      .lean();
+
+    if (!productosFarmacia.length) {
+      return res.json([]);
+    }
+
+    const byCodigo = new Map();
+    for (const p of productosFarmacia) {
+      if (!p.codigo) continue;
+      if (!byCodigo.has(p.codigo)) byCodigo.set(p.codigo, p);
+    }
+    const codigos = Array.from(byCodigo.keys());
+
+    const aggSolicitudes = await SolicitudProductoCliente.aggregate([
+      { $match: { codigo: { $in: codigos } } },
+      {
+        $group: {
+          _id: '$codigo',
+          totalSolicitudes: { $sum: 1 },
+          fecha: { $max: '$createdAt' },
+        },
+      },
+    ]);
+
+    const notifs = aggSolicitudes.map((s) => {
+      const codigo = s._id;
+      const prod = byCodigo.get(codigo);
+      const descripcionEfectiva = (() => {
+        if (!prod) return codigo;
+        if (prod.usarDescripcionCatalogo && prod.descripcionCatalogo) return prod.descripcionCatalogo;
+        return prod.descripcionPersonalizada || prod.descripcion || codigo;
+      })();
+      return {
+        id: codigo,
+        codigo,
+        descripcion: descripcionEfectiva,
+        totalSolicitudes: s.totalSolicitudes || 0,
+        fecha: s.fecha,
+      };
+    }).sort((a, b) => {
+      const da = a.fecha ? new Date(a.fecha).getTime() : 0;
+      const db = b.fecha ? new Date(b.fecha).getTime() : 0;
+      return db - da;
+    });
+
+    res.json(notifs);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener notificaciones de productos para farmacia' });
+  }
+});
+
 // --- Proveedores (Plan Full) ---
 router.get('/proveedores', requirePlanFull, async (req, res) => {
   try {
