@@ -115,22 +115,51 @@ router.get('/inventario/solicitudes-detalle', async (req, res) => {
 });
 
 // GET /api/master/inventario — solo admin (master). Paginado: page, page_size. Respuesta { items, total }.
-// Usa pipeline de agregación y solo carga la página actual del catálogo para mejor rendimiento.
+// Soporta búsqueda q por codigo/descripcion/marca (contiene, no solo empieza por). Usa catálogo maestro como base.
 router.get('/inventario', async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const page_size = Math.min(500, Math.max(1, parseInt(req.query.page_size, 10) || 300));
     const skip = (page - 1) * page_size;
 
-    const cached = getCachedInventario(page, page_size);
-    if (cached) return res.json(cached);
+    const qRaw = (req.query.q && String(req.query.q).trim()) || '';
+    const q = qRaw.toLowerCase();
+
+    const useCache = !q;
+    if (useCache) {
+      const cached = getCachedInventario(page, page_size);
+      if (cached) return res.json(cached);
+    }
 
     const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
     const coll = dbCatalogo.collection('catalogo_maestro');
 
-    const total = await coll.countDocuments({ ean_13: { $exists: true, $ne: '' } });
+    const baseFilter = { ean_13: { $exists: true, $ne: '' } };
+    let catalogFilter = baseFilter;
+    if (q) {
+      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const palabras = q.split(/\s+/).filter((p) => p);
+      if (palabras.length) {
+        const andConds = palabras.map((palabra) => {
+          const re = new RegExp(escapeRegex(palabra), 'i');
+          return {
+            $or: [
+              { ean_13: re },
+              { description: re },
+              { brand: re },
+            ],
+          };
+        });
+        catalogFilter = {
+          ...baseFilter,
+          $and: andConds,
+        };
+      }
+    }
+
+    const total = await coll.countDocuments(catalogFilter);
     const catalogoDocs = await coll
-      .find({ ean_13: { $exists: true, $ne: '' } }, { projection: { ean_13: 1, description: 1, brand: 1 } })
+      .find(catalogFilter, { projection: { ean_13: 1, description: 1, brand: 1 } })
       .sort({ ean_13: 1 })
       .skip(skip)
       .limit(page_size)
@@ -185,7 +214,9 @@ router.get('/inventario', async (req, res) => {
     });
 
     const out = { items, total };
-    setCachedInventario(page, page_size, out);
+    if (useCache) {
+      setCachedInventario(page, page_size, out);
+    }
     res.json(out);
   } catch (e) {
     console.error(e);

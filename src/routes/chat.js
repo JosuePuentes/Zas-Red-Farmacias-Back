@@ -23,6 +23,12 @@ Reglas de fluidez:
 - Responde directo, con frases cortas y cercanas. Sin ser mecánica.
 - Si en la conversación hay mensajes anteriores, puedes preguntar con educación por su estado: por ejemplo si sigue con el dolor que mencionó, si se está tomando el tratamiento, o si necesita repetir la compra. Muestra que recuerdas el contexto.
 
+Manejo de síntomas vs nombres de medicamentos:
+- Si el mensaje del usuario describe un síntoma (por ejemplo "me duele la cabeza", "tengo fiebre", "me arde el estómago", "tengo acidez", "tengo tos", "tengo alergia", "tengo gripe"), NO respondas diciendo que eso no es un nombre de medicamento.
+- Primero, reconoce el síntoma con empatía y explica con dulzura qué tipo de medicamento suele usarse (por ejemplo, para dolor de cabeza → analgésicos suaves como paracetamol o ibuprofeno; para fiebre → antipiréticos como paracetamol; para acidez/dolor de estómago → antiácidos o protectores gástricos, etc.).
+- Después, indica al usuario que recuerde siempre consultar con su médico o con su farmacéutico de confianza antes de tomar cualquier medicamento (usa la advertencia médica solo una vez por conversación).
+- Luego, cuando el sistema te haya proporcionado datos de productos en [Datos de producto] o en el contexto, menciona que le muestras algunas opciones disponibles para ese síntoma. Si no hay productos, aclara que ese tipo de medicamento sería adecuado pero que en este momento no está disponible en catálogo y que se puede registrar como solicitado.
+
 Lógica de ventas y proactividad:
 - Acidez o dolor de barriga: ofrece un antiácido y sugiere proactivamente nuestra agua mineral, diciendo que es más sana para la digestión.
 - Gripe/resfriado: sugiere antigripales y vitamina C.
@@ -30,6 +36,38 @@ Lógica de ventas y proactividad:
 - Si el cliente compra o pregunta por medicamentos que suele tomar con frecuencia (tensión, diabetes, etc.), sugiere que puede agregarlo a sus recordatorios para que la app le avise a la hora de tomarlo o cuando le quede poco.
 
 Cuando te den datos de un producto (nombre, precio, etc.) en [Datos de producto], responde de forma natural con ese precio y anima a agregarlo al carrito. NO escribas etiquetas [ACCION:...]. El sistema ya ejecutó la consulta; solo responde como Dona con el precio y la invitación. Si hay imagen, puedes decir que le dejas la foto para que lo agregue de una vez.`;
+
+function detectSymptomKeywords(text) {
+  const t = (text || '').toLowerCase();
+  const keywords = new Set();
+
+  if (t.includes('dolor de cabeza') || t.includes('jaqueca') || t.includes('migraña') || t.includes('migra?a')) {
+    keywords.add('paracetamol');
+    keywords.add('ibuprofeno');
+  }
+  if (t.includes('fiebre') || t.includes('temperatura alta')) {
+    keywords.add('paracetamol');
+    keywords.add('ibuprofeno');
+  }
+  if (t.includes('dolor de estomago') || t.includes('dolor de estómago') || t.includes('ardor en el estomago') || t.includes('ardor en el estómago') || t.includes('acidez') || t.includes('agruras')) {
+    keywords.add('antiacido');
+    keywords.add('omeprazol');
+  }
+  if (t.includes('tos')) {
+    keywords.add('antitusivo');
+  }
+  if (t.includes('gripe') || t.includes('resfriado')) {
+    keywords.add('antigripal');
+    keywords.add('vitamina c');
+  }
+  if (t.includes('alergia') || t.includes('rinitis')) {
+    keywords.add('loratadina');
+    keywords.add('antihistamínico');
+    keywords.add('antihistaminico');
+  }
+
+  return Array.from(keywords);
+}
 
 function buildPrompt(userName, messages, productData) {
   const safeName = (userName && String(userName).trim()) || 'cliente';
@@ -106,8 +144,24 @@ router.post('/', auth, async (req, res) => {
   const queryForProduct = followUp && userMessages.length
     ? String((userMessages[userMessages.length - 1].content || '').trim())
     : lastContent;
+
+  const symptomKeywords = detectSymptomKeywords(queryForProduct);
+
   let productData = [];
-  if (queryForProduct.length >= 2) {
+  if (symptomKeywords.length > 0) {
+    const resultLists = await Promise.all(symptomKeywords.map((kw) => buscarProductoParaChat(kw)));
+    const merged = [];
+    const seen = new Set();
+    for (const list of resultLists) {
+      for (const p of list) {
+        const key = `${p.codigo || ''}|${p.id || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(p);
+      }
+    }
+    productData = merged;
+  } else if (queryForProduct.length >= 2) {
     productData = await buscarProductoParaChat(queryForProduct);
   }
 

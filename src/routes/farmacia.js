@@ -666,7 +666,8 @@ router.get('/inventario', async (req, res) => {
     if (!farmaciaId) return res.status(403).json({ error: 'Farmacia no asignada' });
     const farmacia = await Farmacia.findById(farmaciaId).select('planProActivo');
 
-    const q = (req.query.q && String(req.query.q).trim()) || '';
+    const qRaw = (req.query.q && String(req.query.q).trim()) || '';
+    const q = qRaw.toLowerCase();
     const pageParam = parseInt(req.query.page, 10);
     const pageSizeParam = parseInt(req.query.page_size, 10);
     const usePagination = Number.isInteger(pageParam) && Number.isInteger(pageSizeParam) && pageParam >= 1 && pageSizeParam >= 1;
@@ -681,15 +682,23 @@ router.get('/inventario', async (req, res) => {
     let catalogFilter = baseFilter;
     if (q) {
       const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp(escapeRegex(q), 'i');
-      catalogFilter = {
-        ...baseFilter,
-        $or: [
-          { ean_13: re },
-          { description: re },
-          { brand: re },
-        ],
-      };
+      const palabras = q.split(/\s+/).filter((p) => p);
+      if (palabras.length) {
+        const andConds = palabras.map((palabra) => {
+          const re = new RegExp(escapeRegex(palabra), 'i');
+          return {
+            $or: [
+              { ean_13: re },
+              { description: re },
+              { brand: re },
+            ],
+          };
+        });
+        catalogFilter = {
+          ...baseFilter,
+          $and: andConds,
+        };
+      }
     }
 
     let total = 0;
