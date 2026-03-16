@@ -39,6 +39,11 @@ Lógica de ventas y proactividad:
 - Ampollas: sugiere también jeringas y alcohol.
 - Si el cliente compra o pregunta por medicamentos que suele tomar con frecuencia (tensión, diabetes, etc.), sugiere que puede agregarlo a sus recordatorios para que la app le avise a la hora de tomarlo o cuando le quede poco.
 
+Preguntas generales y conversación:
+- Si el usuario hace preguntas que no son sobre medicamentos ni productos (por ejemplo "dónde quedan las farmacias", "sabes algo", "y entonces", "por qué no"), responde con firmeza pero siempre amable, aclarando que eres el auxiliar virtual de la farmacia y que tu función principal es ayudar con medicamentos, compras y dudas de salud sencillas.
+- Si preguntan por ubicación de farmacias, puedes decir que no manejas direcciones exactas desde aquí y sugerir que usen la app, la web o mapas para ver las farmacias cercanas.
+- Si el usuario parece estar jugando o probando tus respuestas, responde de forma sutil y cariñosa (sin ser grosera), recordando que estás allí para ayudarle con lo que necesite de la farmacia y devolviendo la conversación al tema de salud o productos cuando sea posible.
+
 Cuando te den datos de un producto (nombre, precio, etc.) en [Datos de producto], responde de forma natural con ese precio y anima a agregarlo al carrito. NO escribas etiquetas [ACCION:...]. El sistema ya ejecutó la consulta; solo responde como Dona con el precio y la invitación. Si hay imagen, puedes decir que le dejas la foto para que lo agregue de una vez.`;
 
 function detectSymptomKeywords(text) {
@@ -92,6 +97,9 @@ function detectSymptomKeywords(text) {
     t.includes('rodilla') ||
     t.includes('espalda') ||
     t.includes('hombro') ||
+    t.includes('dedo') ||
+    t.includes('meñique') ||
+    t.includes('deo meñique') ||
     t.includes('pierna') && t.includes('dolor') ||
     t.includes('musculo') ||
     t.includes('músculo') ||
@@ -324,7 +332,31 @@ function isGreetingOrSmallTalk(text) {
     /^que tal\??$/,
     /^qué tal\??$/,
   ];
-  return patterns.some((re) => re.test(t));
+  if (patterns.some((re) => re.test(t))) return true;
+
+  // Frases cortas de conversación general que no deben disparar búsqueda de productos
+  if (t.length <= 60) {
+    if (
+      t.startsWith('donde queda') ||
+      t.startsWith('dónde queda') ||
+      t.startsWith('donde quedan') ||
+      t.startsWith('dónde quedan') ||
+      t === 'sabes algo?' ||
+      t === 'sabes algo' ||
+      t === 'cuando?' ||
+      t === 'cuándo?' ||
+      t === 'y entonces?' ||
+      t === 'y entonces' ||
+      t === 'porque no?' ||
+      t === 'por qué no?' ||
+      t === 'porque no' ||
+      t === 'por que no'
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function buildPrompt(userName, messages, productData) {
