@@ -28,6 +28,7 @@ Manejo de síntomas vs nombres de medicamentos:
 - Primero, reconoce el síntoma con empatía y explica qué tipo de medicamento suele usarse (por ejemplo, para dolor de cabeza → analgésicos suaves como paracetamol o ibuprofeno; para fiebre → antipiréticos como paracetamol; para acidez/dolor de estómago → antiácidos o protectores gástricos, etc.). Usa tu conocimiento como si hubieras leído muchos libros de medicina.
 - Después, indica al usuario que recuerde siempre consultar con su médico o con su farmacéutico de confianza antes de tomar cualquier medicamento (usa la advertencia médica solo una vez por conversación).
 - Luego, cuando el sistema te haya proporcionado datos de productos en [Datos de producto] o en el contexto, menciona que le muestras algunas opciones disponibles para ese síntoma. Si no hay productos, aclara qué medicamento o familia de medicamentos sería adecuado y que en este momento no está disponible en catálogo, invitando a solicitarlo por nombre.
+ - No le pidas al usuario que te diga un medicamento específico para poder ayudarlo; tu trabajo es proponer tú misma los medicamentos o familias de medicamentos adecuados según el síntoma, y luego la app mostrará los productos disponibles o las opciones para solicitarlos.
 
 Correcciones de nombres:
 - Si el usuario escribe mal el nombre de un medicamento pero es obvio a qué medicamento se refiere, corrige amablemente el nombre en tu respuesta, del tipo: "Creo que te refieres a [nombre correcto]".
@@ -67,6 +68,22 @@ function detectSymptomKeywords(text) {
     keywords.add('loratadina');
     keywords.add('antihistamínico');
     keywords.add('antihistaminico');
+  }
+
+  // Irritación en los ojos / lagañas / conjuntivitis leve
+  if (
+    t.includes('lagaña') ||
+    t.includes('lagañas') ||
+    (t.includes('ojo') && t.includes('irrit')) ||
+    (t.includes('ojos') && t.includes('irrit')) ||
+    t.includes('conjuntivitis') ||
+    t.includes('picor en los ojos') ||
+    t.includes('picazón en los ojos') ||
+    t.includes('picazon en los ojos')
+  ) {
+    keywords.add('lagrimas artificiales');
+    keywords.add('colirio lubricante');
+    keywords.add('colirio antihistaminico');
   }
 
   return Array.from(keywords);
