@@ -246,6 +246,7 @@ function detectSymptomKeywords(text) {
   // Dolor de muela
   if (
     t.includes('dolor de muela') ||
+    t.includes('dolor de muelea') || // error común de escritura
     (t.includes('muela') && t.includes('dolor'))
   ) {
     keywords.add('ketoprofeno');
@@ -462,9 +463,16 @@ router.post('/', auth, async (req, res) => {
 
   // Normalizar preguntas tipo "tienes ibuprofeno", "hay paracetamol", "dispones de...", etc.
   const productoPreguntaRegex = /^\s*(tienes?|tiene|dispones?|disponible\s*de?|hay|haber|tienen|disponen)\s+(.+)/i;
-  const tieneMatch = queryForProduct.match(productoPreguntaRegex);
-  if (tieneMatch && tieneMatch[2]) {
-    queryForProduct = String(tieneMatch[2]).trim();
+  let m = queryForProduct.match(productoPreguntaRegex);
+  if (m && m[2]) {
+    queryForProduct = String(m[2]).trim();
+  }
+
+  // Normalizar preguntas tipo "qué es bueno para X", "como me quito X", "como puedo tratar X", etc.
+  const genericaSintomaRegex = /^\s*((que|qué)\s+es\s+buen[oa]\s+para|como\s+me\s+quito|cómo\s+me\s+quito|como\s+puedo\s+tratar|cómo\s+puedo\s+tratar|como\s+puedo\s+curar(me)?|cómo\s+puedo\s+curar(me)?|como\s+puedo\s+curarme|cómo\s+puedo\s+curarme)\s+(.+)/i;
+  m = queryForProduct.match(genericaSintomaRegex);
+  if (m && m[3]) {
+    queryForProduct = String(m[3]).replace(/[?.!]+$/, '').trim();
   }
 
   const ignoreProductSearch = isGreetingOrSmallTalk(queryForProduct);

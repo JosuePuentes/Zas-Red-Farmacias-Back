@@ -49,6 +49,15 @@ export async function buscarProductoParaChat(query) {
     .lean();
 
   if (productos.length === 0) {
+    // Si la consulta parece una frase/pregunta larga (no un nombre de producto),
+    // no generamos un "producto no catalogado" con todo el texto, solo devolvemos vacío
+    // para que Dona pida más detalles sin mostrar tarjeta de producto.
+    const looksLikeSentence = q.length > 40
+      || q.includes('?')
+      || /\b(que|qué|como|cómo|para|tengo|siento|me|quiero|necesito)\b/i.test(q);
+    if (looksLikeSentence) {
+      return [];
+    }
     const dbCatalogo = mongoose.connection.useDb(process.env.MONGO_DB_CATALOGO || 'Zas');
     const coll = dbCatalogo.collection('catalogo_maestro');
     const enCatalogo = await coll.findOne({
