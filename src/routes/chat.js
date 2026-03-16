@@ -111,6 +111,23 @@ function detectSymptomKeywords(text) {
   return Array.from(keywords);
 }
 
+function isGreetingOrSmallTalk(text) {
+  const t = (text || '').toLowerCase().trim();
+  if (!t) return false;
+  const patterns = [
+    /^hola\b/,
+    /^(buen[oa]s?\s+(d[ií]as|tardes|noches))/,
+    /^hey\b/,
+    /^buenas\b/,
+    /^como estas\??$/,
+    /^cómo estas\??$/,
+    /^como te va\??$/,
+    /^que tal\??$/,
+    /^qué tal\??$/,
+  ];
+  return patterns.some((re) => re.test(t));
+}
+
 function buildPrompt(userName, messages, productData) {
   const safeName = (userName && String(userName).trim()) || 'cliente';
   const parts = [
@@ -187,10 +204,11 @@ router.post('/', auth, async (req, res) => {
     ? String((userMessages[userMessages.length - 1].content || '').trim())
     : lastContent;
 
-  const symptomKeywords = detectSymptomKeywords(queryForProduct);
+  const ignoreProductSearch = isGreetingOrSmallTalk(queryForProduct);
+  const symptomKeywords = ignoreProductSearch ? [] : detectSymptomKeywords(queryForProduct);
 
   let productData = [];
-  if (symptomKeywords.length > 0) {
+  if (!ignoreProductSearch && symptomKeywords.length > 0) {
     const resultLists = await Promise.all(symptomKeywords.map((kw) => buscarProductoParaChat(kw)));
     const merged = [];
     const seen = new Set();
@@ -203,7 +221,7 @@ router.post('/', auth, async (req, res) => {
       }
     }
     productData = merged;
-  } else if (queryForProduct.length >= 2) {
+  } else if (!ignoreProductSearch && queryForProduct.length >= 2) {
     productData = await buscarProductoParaChat(queryForProduct);
   }
 
