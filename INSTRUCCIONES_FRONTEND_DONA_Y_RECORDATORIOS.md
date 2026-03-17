@@ -3,28 +3,32 @@
 ## 1. Chat (Dona)
 
 ### Respuesta del backend
-- **Antes:** El backend devolvía `Content-Type: text/plain` y solo texto.
-- **Ahora:** El backend devuelve **JSON**:
+- El backend devuelve **JSON** con siempre dos campos:
   ```json
   {
-    "message": "Mira, el Paracetamol de 500mg lo tenemos en $2.50. Aquí te dejo la foto por si quieres agregarlo de una vez.",
-    "product": {
-      "id": "...",
-      "codigo": "PARACETAMOL001",
-      "descripcion": "Paracetamol 500mg x 30",
-      "precio": 2.5,
-      "imagen": "uploads/...",
-      "farmaciaId": "...",
-      "existencia": 10
-    }
+    "message": "¡Claro que sí! Aquí en Zas! tenemos Acetaminofén disponible. Con gusto te muestro las presentaciones.",
+    "productos": [
+      {
+        "id": "69ae9521e695008c8ae43839",
+        "codigo": "7591818215265",
+        "descripcion": "Acetaminofen + Clorfeniramina 500 Mg/4Mg Clorace Caja x 20 tabletas",
+        "precio": 0,
+        "imagen": "public/productos/7591818215265.jpg",
+        "farmaciaId": null,
+        "disponible": false,
+        "existencia": 0
+      }
+    ]
   }
   ```
-  - `product` solo viene cuando el usuario preguntó por un producto y se encontró en catálogo. Si no hay producto, `product` no viene o es `undefined`.
+- **`message`** (string): texto de Dona. Mostrarlo siempre como mensaje del asistente.
+- **`productos`** (array): lista de productos encontrados. Puede ser `[]`. Cada ítem: `id`, `codigo`, `descripcion`, `precio`, `imagen`, `farmaciaId`, **`disponible`** (boolean), `existencia`. Si `disponible === true` → botón "Agregar al carrito"; si `false` → botón "Solicitar".
 
 ### Qué hacer en el frontend
-1. **Llamar a `POST /api/chat`** con `Content-Type: application/json` y body `{ userName, messages }`. La respuesta es **JSON** (no texto plano).
-2. Si la respuesta tiene **`product`**, mostrar una **tarjeta de producto** en el chat (foto, descripción, precio, botón "Agregar al carrito") además del texto `message`. La imagen: si `product.imagen` es relativa, usar `getBackendBaseUrl() + '/' + product.imagen`.
-3. **Historial:** Al abrir el chat, llamar a **`GET /api/chat/history`** (con auth). Respuesta: `{ messages: [{ role, content, product? }] }`. Cargar esos mensajes en el estado del chat y, al enviar un mensaje nuevo, enviar a `POST /api/chat` el array completo (historial + nuevo mensaje del usuario). Así Dona “recuerda” y puede preguntar por el dolor o el tratamiento de antes.
+1. **Llamar a `POST /api/chat`** con `Content-Type: application/json` y body `{ userName, messages }`. Respuesta: `{ message, productos }`.
+2. Mostrar **`message`** como mensaje de Dona.
+3. Si **`productos.length > 0`**, mostrar **tarjetas** debajo del mensaje: **imagen** = `baseURL + '/' + producto.imagen` (ej. `https://zas-red-farmacias-back.onrender.com/public/productos/xxx.jpg`), **descripción**, **precio** (o "Consultar" si 0), **botón** "Agregar al carrito" si `producto.disponible === true`, o "Solicitar" si `false` (usar `POST /api/cliente/solicitar-producto` por código o `solicitar-producto-por-nombre` por nombre).
+4. **Historial:** Al abrir el chat, llamar a **`GET /api/chat/history`** (con auth). Respuesta: `{ messages: [{ role, content, product? }] }`. Cargar mensajes y al enviar uno nuevo enviar a `POST /api/chat` el array completo (historial + nuevo). Así Dona “recuerda” y puede preguntar por el dolor o el tratamiento de antes.
 
 ---
 
