@@ -467,6 +467,14 @@ router.post('/', auth, async (req, res) => {
     ? String((userMessages[userMessages.length - 1].content || '').trim())
     : lastContent;
 
+  // Quitar saludos al inicio si luego viene una pregunta de producto, para no bloquear la búsqueda
+  // Ej: "Hola tienes gel?" -> "tienes gel?"
+  const greetingPrefixRegex = /^\s*(hola|buenas(?:\s+(d[ií]as|tardes|noches))?|hey)[,!\s]+(.+)/i;
+  let gm = queryForProduct.match(greetingPrefixRegex);
+  if (gm && gm[2]) {
+    queryForProduct = String(gm[2]).trim();
+  }
+
   // Normalizar preguntas tipo "tienes ibuprofeno", "hay paracetamol", "dispones de...", etc.
   const productoPreguntaRegex = /^\s*(tienes?|tiene|dispones?|disponible\s*de?|hay|haber|tienen|disponen)\s+(.+)/i;
   let m = queryForProduct.match(productoPreguntaRegex);
