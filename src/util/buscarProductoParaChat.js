@@ -69,9 +69,9 @@ export async function buscarProductoParaChat(query) {
     // Si la consulta parece una frase/pregunta larga (no un nombre de producto),
     // no generamos un "producto no catalogado" con todo el texto, solo devolvemos vacío
     // para que Dona pida más detalles sin mostrar tarjeta de producto.
-    const looksLikeSentence = q.length > 40
-      || q.includes('?')
-      || /\b(que|qué|como|cómo|para|tengo|siento|me|quiero|necesito)\b/i.test(q);
+    // PERO consultas cortas tipo "acetaminofen?" o "ibuprofeno?" SÍ deben buscar producto.
+    const hasQuestionWord = /\b(que|qué|como|cómo|para|tengo|siento|me|quiero|necesito)\b/i.test(q);
+    const looksLikeSentence = q.length > 60 || (q.includes('?') && hasQuestionWord);
     if (looksLikeSentence) {
       return [];
     }
