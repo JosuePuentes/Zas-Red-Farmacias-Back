@@ -26,6 +26,23 @@ function toProductItem(p, precio) {
 }
 
 /**
+ * Construye un RegExp que coincide con el texto ignorando tildes (e con é, o con ó, etc.).
+ * Así "acetaminofen" encuentra "Acetaminofén" en la BD.
+ */
+function buildAccentInsensitiveRegex(text) {
+  const escaped = String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const accentClasses = {
+    a: '[aáàäâã]', e: '[eéèëê]', i: '[iíìïî]', o: '[oóòöôõ]', u: '[uúùüû]',
+    n: '[nñ]', c: '[cç]',
+  };
+  const pattern = escaped.replace(/(.)/g, (ch) => {
+    const lower = ch.toLowerCase();
+    return accentClasses[lower] || (accentClasses[ch] || ch);
+  });
+  return new RegExp(pattern, 'i');
+}
+
+/**
  * Busca productos por nombre o código para el chat Dona.
  * Devuelve array de productos (con o sin stock); cada uno lleva disponible (boolean) y existencia (number).
  * Si hay stock: al menos uno con disponible true para "Agregar al carrito". Si no hay: disponible false para "Solicitar".
@@ -36,7 +53,7 @@ export async function buscarProductoParaChat(query) {
   const q = (query && String(query).trim()) || '';
   if (!q || q.length < 2) return [];
 
-  const search = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  const search = buildAccentInsensitiveRegex(q);
   const productos = await Producto.find({
     $or: [
       { codigo: search },
