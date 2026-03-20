@@ -140,10 +140,16 @@ router.get('/pedidos-disponibles', async (req, res) => {
         tiempoLimite = new Date(p.createdAt.getTime() + 60 * 1000);
         if (now > tiempoLimite) continue; // ya pasó el minuto
       } else if (now > tiempoLimite) continue;
+
+      // Asegurar que el frontend reciba un número (evita renderizar "—")
+      const costoDelivery = Math.round(Number(p.costoDelivery ?? 0) * 100) / 100;
       const obj = {
         ...p.toObject(),
         tiempoLimiteAceptar: tiempoLimite,
-        precioDelivery: p.costoDelivery,
+        costoDelivery,
+        // Alias para compatibilidad con UI/otros consumidores
+        tarifaDelivery: costoDelivery,
+        precioDelivery: costoDelivery,
       };
       if (p.farmaciaId?.lat != null && p.farmaciaId?.lng != null) {
         obj.coordsFarmacia = { lat: p.farmaciaId.lat, lng: p.farmaciaId.lng };
@@ -157,6 +163,59 @@ router.get('/pedidos-disponibles', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al listar pedidos' });
+  }
+});
+
+// Alias recomendado: GET /api/delivery/pedidos
+// Algunos frentes/UI esperan este endpoint con el mismo contrato que "/pedidos-disponibles".
+router.get('/pedidos', async (req, res) => {
+  try {
+    const user = await User.findById(getDeliveryId(req));
+    if (!user?.deliveryAprobado || !user?.activoRecepcionPedidos) {
+      return res.json([]);
+    }
+
+    const pedidos = await Pedido.find({
+      estado: 'validado',
+      deliveryId: null,
+    })
+      .populate('clienteId', 'nombre apellido telefono direccion estado municipio')
+      .populate('farmaciaId', 'nombreFarmacia direccion telefono estado lat lng')
+      .sort({ createdAt: 1 });
+
+    // Añadir tiempo límite 1 min si no existe
+    const now = new Date();
+    const result = [];
+    for (const p of pedidos) {
+      let tiempoLimite = p.tiempoLimiteAceptar;
+      if (!tiempoLimite) {
+        tiempoLimite = new Date(p.createdAt.getTime() + 60 * 1000);
+        if (now > tiempoLimite) continue; // ya pasó el minuto
+      } else if (now > tiempoLimite) continue;
+
+      // Asegurar que el frontend reciba un número (evita renderizar "—")
+      const costoDelivery = Math.round(Number(p.costoDelivery ?? 0) * 100) / 100;
+      const obj = {
+        ...p.toObject(),
+        tiempoLimiteAceptar: tiempoLimite,
+        costoDelivery,
+        // Alias para compatibilidad con UI/otros consumidores
+        tarifaDelivery: costoDelivery,
+        precioDelivery: costoDelivery,
+      };
+
+      if (p.farmaciaId?.lat != null && p.farmaciaId?.lng != null) {
+        obj.coordsFarmacia = { lat: p.farmaciaId.lat, lng: p.farmaciaId.lng };
+      }
+      if (p.lat != null && p.lng != null) {
+        obj.coordsEntrega = { lat: p.lat, lng: p.lng };
+      }
+      result.push(obj);
+    }
+    return res.json(result);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'Error al listar pedidos' });
   }
 });
 
@@ -244,6 +303,11 @@ router.get('/mis-pedidos', async (req, res) => {
       .sort({ aceptadoEn: -1 });
     const list = pedidos.map((p) => {
       const obj = p.toObject();
+      const costoDelivery = Math.round(Number(p.costoDelivery ?? 0) * 100) / 100;
+      obj.costoDelivery = costoDelivery;
+      obj.tarifaDelivery = costoDelivery;
+      // Compatibilidad con UIs que usan precioDelivery
+      obj.precioDelivery = costoDelivery;
       if (p.farmaciaId?.lat != null && p.farmaciaId?.lng != null) {
         obj.coordsFarmacia = { lat: p.farmaciaId.lat, lng: p.farmaciaId.lng };
       }
